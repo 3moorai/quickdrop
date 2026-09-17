@@ -29,8 +29,18 @@ export const PairingCard: React.FC<PairingCardProps> = ({
   const [copiedCode, setCopiedCode] = useState(false);
   const [copiedLink, setCopiedLink] = useState(false);
   const [timeLeft, setTimeLeft] = useState<string>('');
-
-  const joinUrl = `${window.location.origin}/?join=${session.token}`;
+  const getJoinUrl = () => {
+    try {
+      const url = new URL(window.location.href);
+      url.search = `?join=${encodeURIComponent(session.token)}&code=${encodeURIComponent(session.sessionId)}`;
+      url.hash = '';
+      return url.toString();
+    } catch {
+      const base = window.location.href.split('?')[0];
+      return `${base}?join=${encodeURIComponent(session.token)}&code=${encodeURIComponent(session.sessionId)}`;
+    }
+  };
+  const joinUrl = getJoinUrl();
 
   useEffect(() => {
     if (canvasRef.current) {

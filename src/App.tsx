@@ -433,7 +433,7 @@ export default function App() {
     }
   };
 
-  // Check URL parameters for direct join (?join=token or ?code=QK-XXXX-XXXX)
+  // Check URL parameters for direct join or auto-start QR on PC / open scanner on mobile
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
     const joinToken = params.get('join');
@@ -443,6 +443,15 @@ export default function App() {
       handleJoinSession(joinToken).catch(() => {});
     } else if (code) {
       handleJoinSession(code).catch(() => {});
+    } else {
+      const isMobile = /Mobi|Android|iPhone|iPad/i.test(navigator.userAgent);
+      if (isMobile) {
+        // Automatically open the camera scanner on mobile to scan PC
+        setIsScannerOpen(true);
+      } else {
+        // Automatically start transfer session on computer to display QR code immediately
+        handleStartSession();
+      }
     }
   }, []);
 
@@ -516,29 +525,6 @@ export default function App() {
     );
   }
 
-  // If user is not logged in, show the Login/Register/OTP Verification screen
-  if (!currentUser) {
-    return (
-      <div className="min-h-screen flex flex-col bg-zinc-50 dark:bg-zinc-950 text-zinc-900 dark:text-zinc-100 selection:bg-blue-500 selection:text-white antialiased">
-        <Navbar
-          currentTab="transfer"
-          onTabChange={() => {}}
-          connectionState="disconnected"
-          theme={theme}
-          onToggleTheme={toggleTheme}
-          hasActiveSession={false}
-          currentUser={null}
-        />
-        <main className="flex-1 flex items-center justify-center">
-          <AuthView onAuthSuccess={(user) => {
-            setCurrentUser(user);
-            setCurrentTab('transfer');
-          }} />
-        </main>
-      </div>
-    );
-  }
-
   return (
     <div className="min-h-screen flex flex-col bg-zinc-50 dark:bg-zinc-950 text-zinc-900 dark:text-zinc-100 selection:bg-blue-500 selection:text-white antialiased">
       {/* Top Navigation */}
@@ -558,12 +544,30 @@ export default function App() {
 
       {/* Main Content Area */}
       <main className="flex-1 pb-16">
-        {currentTab === 'profile' ? (
-          <ProfileView
-            user={currentUser}
-            onUpdateUser={setCurrentUser}
-            onLogout={handleLogout}
+        {currentTab === 'auth' ? (
+          <AuthView
+            onAuthSuccess={(user) => {
+              setCurrentUser(user);
+              setCurrentTab('transfer');
+            }}
+            onCancel={() => setCurrentTab('transfer')}
           />
+        ) : currentTab === 'profile' ? (
+          currentUser ? (
+            <ProfileView
+              user={currentUser}
+              onUpdateUser={setCurrentUser}
+              onLogout={handleLogout}
+            />
+          ) : (
+            <AuthView
+              onAuthSuccess={(user) => {
+                setCurrentUser(user);
+                setCurrentTab('profile');
+              }}
+              onCancel={() => setCurrentTab('transfer')}
+            />
+          )
         ) : currentTab === 'history' ? (
           <HistoryView
             files={files}

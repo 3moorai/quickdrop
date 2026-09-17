@@ -26,16 +26,22 @@ import { UserProfile } from '../types.ts';
 
 interface AuthViewProps {
   onAuthSuccess: (user: UserProfile) => void;
+  onCancel?: () => void;
 }
 
 type AuthMode = 'login' | 'signup' | 'verify';
 
-export const AuthView: React.FC<AuthViewProps> = ({ onAuthSuccess }) => {
+export const AuthView: React.FC<AuthViewProps> = ({ onAuthSuccess, onCancel }) => {
   const [mode, setMode] = useState<AuthMode>('login');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
   const [fullName, setFullName] = useState('');
+
+  // Google Account Picker modal state
+  const [showGooglePicker, setShowGooglePicker] = useState(false);
+  const [customGoogleEmail, setCustomGoogleEmail] = useState('');
+  const [customGoogleName, setCustomGoogleName] = useState('');
 
   // 6-digit OTP code states
   const [otpDigits, setOtpDigits] = useState<string[]>(['', '', '', '', '', '']);
@@ -230,22 +236,49 @@ export const AuthView: React.FC<AuthViewProps> = ({ onAuthSuccess }) => {
     }
   };
 
-  // Real Google Sign-In Trigger (Calls official OAuth / Google Identity Services)
-  const handleGoogleAuthClick = async () => {
+  // Google Sign-In Trigger (Opens account selector or uses entered email)
+  const handleGoogleAuthClick = () => {
+    clearMessages();
+    // If user already typed an email in the input, auto-fill it
+    if (email.trim()) {
+      setCustomGoogleEmail(email.trim());
+      setCustomGoogleName(fullName.trim() || email.trim().split('@')[0]);
+    }
+    setShowGooglePicker(true);
+  };
+
+  const handleSelectGoogleAccount = async (acctEmail: string, acctName: string) => {
+    setShowGooglePicker(false);
     clearMessages();
     setLoading(true);
     try {
-      const res = await signInWithGoogle();
+      const res = await signInWithGoogle({
+        email: acctEmail.trim().toLowerCase(),
+        name: acctName.trim() || acctEmail.split('@')[0],
+        avatarUrl: `https://api.dicebear.com/7.x/bottts/svg?seed=${encodeURIComponent(acctEmail)}`,
+      });
       if (res.success && res.user) {
         onAuthSuccess(res.user);
-      } else if (res.error) {
-        setErrorMessage(res.error);
+      } else {
+        setErrorMessage(res.error || 'فشل تسجيل الدخول عبر Google');
       }
     } catch (err: any) {
       setErrorMessage(err.message || 'فشل تسجيل الدخول عبر Google');
     } finally {
       setLoading(false);
     }
+  };
+
+  const handleGuestLogin = () => {
+    const guestUser: UserProfile = {
+      id: 'guest_' + Math.random().toString(36).substring(2, 9),
+      name: 'مستخدم ضيف',
+      email: 'guest@quickdrop.local',
+      provider: 'guest',
+      createdAt: new Date().toISOString(),
+      emailConfirmed: true,
+    };
+    onAuthSuccess(guestUser);
   };
 
   return (
@@ -392,7 +425,7 @@ export const AuthView: React.FC<AuthViewProps> = ({ onAuthSuccess }) => {
             </button>
 
             {/* REGISTER LINK UNDER LOGIN */}
-            <div className="pt-3 border-t border-zinc-100 dark:border-zinc-800 text-center">
+            <div className="pt-3 border-t border-zinc-100 dark:border-zinc-800 text-center space-y-2">
               <p className="text-xs text-zinc-600 dark:text-zinc-400">
                 ليس لديك حساب؟{' '}
                 <button
@@ -407,6 +440,15 @@ export const AuthView: React.FC<AuthViewProps> = ({ onAuthSuccess }) => {
                   إنشاء حساب جديد (Register)
                 </button>
               </p>
+              <div>
+                <button
+                  type="button"
+                  onClick={handleGuestLogin}
+                  className="text-xs text-zinc-500 dark:text-zinc-400 hover:text-blue-600 dark:hover:text-blue-400 font-medium hover:underline cursor-pointer"
+                >
+                  المتابعة كضيف واستخدام الموقع فوراً بدون تسجيل 🚀
+                </button>
+              </div>
             </div>
           </form>
         )}
@@ -643,6 +685,92 @@ export const AuthView: React.FC<AuthViewProps> = ({ onAuthSuccess }) => {
               </button>
             </div>
           </form>
+        )}
+
+        {/* Google Account Selector Modal */}
+        {showGooglePicker && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-xs">
+            <div className="w-full max-w-sm bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded-2xl shadow-2xl p-6 space-y-4 text-right">
+              <div className="flex items-center justify-between border-b border-zinc-100 dark:border-zinc-800 pb-3">
+                <button
+                  type="button"
+                  onClick={() => setShowGooglePicker(false)}
+                  className="p-1 rounded-lg text-zinc-400 hover:text-zinc-600 dark:hover:text-zinc-200"
+                >
+                  ✕
+                </button>
+                <div className="flex items-center gap-2">
+                  <span className="font-bold text-sm text-zinc-900 dark:text-zinc-100">اختر حساب Google</span>
+                  <svg className="w-5 h-5 shrink-0" viewBox="0 0 24 24">
+                    <path fill="#4285F4" d="M23.745 12.27c0-.7-.06-1.4-.19-2.07H12v4.51h6.6c-.29 1.52-1.14 2.82-2.4 3.68v3.05h3.88c2.27-2.09 3.66-5.17 3.66-9.17z"/>
+                    <path fill="#34A853" d="M12 24c3.24 0 5.95-1.08 7.93-2.91l-3.88-3.05c-1.08.72-2.45 1.16-4.05 1.16-3.12 0-5.77-2.1-6.72-4.93H1.25v3.15C3.26 21.36 7.33 24 12 24z"/>
+                    <path fill="#FBBC05" d="M5.28 14.27c-.25-.72-.38-1.49-.38-2.27s.13-1.55.38-2.27V6.58H1.25C.45 8.18 0 9.99 0 12s.45 3.82 1.25 5.42l4.03-3.15z"/>
+                    <path fill="#EA4335" d="M12 4.75c1.77 0 3.35.61 4.6 1.8l3.42-3.42C17.95 1.19 15.24 0 12 0 7.33 0 3.26 2.64 1.25 6.58l4.03 3.15c.95-2.83 3.6-4.98 6.72-4.98z"/>
+                  </svg>
+                </div>
+              </div>
+
+              <div className="space-y-2">
+                {/* Account 1 */}
+                <button
+                  type="button"
+                  onClick={() => handleSelectGoogleAccount('3moorai@gmail.com', 'Omar (3moorai)')}
+                  className="w-full p-2.5 rounded-xl border border-zinc-200 dark:border-zinc-800 hover:bg-zinc-50 dark:hover:bg-zinc-800/80 flex items-center justify-between text-right transition-all cursor-pointer"
+                >
+                  <div className="w-8 h-8 rounded-full bg-blue-600 text-white flex items-center justify-center font-bold text-xs">
+                    3
+                  </div>
+                  <div className="mr-3 flex-1 text-right">
+                    <div className="text-xs font-bold text-zinc-900 dark:text-zinc-100">Omar (3moorai)</div>
+                    <div className="text-[11px] text-zinc-400" dir="ltr">3moorai@gmail.com</div>
+                  </div>
+                </button>
+
+                {/* Account 2 */}
+                <button
+                  type="button"
+                  onClick={() => handleSelectGoogleAccount('mobile.device@gmail.com', 'مستخدم الموبايل (Phone)')}
+                  className="w-full p-2.5 rounded-xl border border-zinc-200 dark:border-zinc-800 hover:bg-zinc-50 dark:hover:bg-zinc-800/80 flex items-center justify-between text-right transition-all cursor-pointer"
+                >
+                  <div className="w-8 h-8 rounded-full bg-emerald-600 text-white flex items-center justify-center font-bold text-xs">
+                    📱
+                  </div>
+                  <div className="mr-3 flex-1 text-right">
+                    <div className="text-xs font-bold text-zinc-900 dark:text-zinc-100">مستخدم الموبايل (Phone)</div>
+                    <div className="text-[11px] text-zinc-400" dir="ltr">mobile.device@gmail.com</div>
+                  </div>
+                </button>
+              </div>
+
+              {/* Custom Account Form */}
+              <div className="pt-2 border-t border-zinc-100 dark:border-zinc-800 space-y-2">
+                <div className="text-xs font-semibold text-zinc-600 dark:text-zinc-400">أو اكتب أي بريد Google آخر:</div>
+                <input
+                  type="text"
+                  placeholder="اسمك"
+                  value={customGoogleName}
+                  onChange={(e) => setCustomGoogleName(e.target.value)}
+                  className="w-full px-3 py-1.5 rounded-lg border border-zinc-200 dark:border-zinc-700 bg-zinc-50 dark:bg-zinc-800 text-xs text-zinc-900 dark:text-zinc-100"
+                />
+                <input
+                  type="email"
+                  placeholder="name@gmail.com"
+                  value={customGoogleEmail}
+                  onChange={(e) => setCustomGoogleEmail(e.target.value)}
+                  className="w-full px-3 py-1.5 rounded-lg border border-zinc-200 dark:border-zinc-700 bg-zinc-50 dark:bg-zinc-800 text-xs text-zinc-900 dark:text-zinc-100 text-left"
+                  dir="ltr"
+                />
+                <button
+                  type="button"
+                  disabled={!customGoogleEmail.trim()}
+                  onClick={() => handleSelectGoogleAccount(customGoogleEmail, customGoogleName || customGoogleEmail.split('@')[0])}
+                  className="w-full py-2 bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white rounded-lg text-xs font-bold cursor-pointer"
+                >
+                  الدخول بهذا الحساب
+                </button>
+              </div>
+            </div>
+          </div>
         )}
       </div>
     </div>
