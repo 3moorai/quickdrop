@@ -10,11 +10,28 @@
     <meta property="og:type" content="website" />
     <meta name="twitter:card" content="summary_large_image" />
     <meta name="theme-color" content="#09090b" />
-    <link rel="manifest" href="/manifest.json" />
+    <link rel="manifest" href="./public/manifest.json" />
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script type="importmap">
+    {
+      "imports": {
+        "react": "https://esm.sh/react@19.0.0",
+        "react/": "https://esm.sh/react@19.0.0/",
+        "react/jsx-runtime": "https://esm.sh/react@19.0.0/jsx-runtime",
+        "react-dom": "https://esm.sh/react-dom@19.0.0",
+        "react-dom/": "https://esm.sh/react-dom@19.0.0/",
+        "react-dom/client": "https://esm.sh/react-dom@19.0.0/client",
+        "lucide-react": "https://esm.sh/lucide-react@0.475.0",
+        "qrcode": "https://esm.sh/qrcode@1.5.4",
+        "jsqr": "https://esm.sh/jsqr@1.4.0",
+        "@supabase/supabase-js": "https://esm.sh/@supabase/supabase-js@2.48.1"
+      }
+    }
+    </script>
   </head>
-  <body>
+  <body class="bg-slate-950 text-slate-100 min-h-screen">
     <div id="root"></div>
-    <script type="module" src="/src/main.tsx"></script>
+    <script type="module" src="./app.js"></script>
   </body>
 </html>
 
