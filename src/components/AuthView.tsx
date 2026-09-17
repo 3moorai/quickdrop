@@ -1,0 +1,619 @@
+import React, { useState, useEffect, useRef } from 'react';
+import { 
+  Lock, 
+  Mail, 
+  User, 
+  ArrowRight, 
+  KeyRound, 
+  CheckCircle2, 
+  AlertCircle, 
+  Eye, 
+  EyeOff, 
+  Sparkles, 
+  RefreshCw,
+  Send,
+  ShieldCheck
+} from 'lucide-react';
+import { 
+  signInUser, 
+  signUpUser, 
+  verifyEmailCode, 
+  resendVerificationCode, 
+  signInWithGoogle,
+  isSupabaseConfigured 
+} from '../lib/auth.ts';
+import { UserProfile } from '../types.ts';
+
+interface AuthViewProps {
+  onAuthSuccess: (user: UserProfile) => void;
+}
+
+type AuthMode = 'login' | 'signup' | 'verify';
+
+export const AuthView: React.FC<AuthViewProps> = ({ onAuthSuccess }) => {
+  const [mode, setMode] = useState<AuthMode>('login');
+  const [email, setEmail] = useState('');
+  const [password, setPassword] = useState('');
+  const [confirmPassword, setConfirmPassword] = useState('');
+  const [fullName, setFullName] = useState('');
+
+  // 6-digit OTP code states
+  const [otpDigits, setOtpDigits] = useState<string[]>(['', '', '', '', '', '']);
+  const otpInputRefs = useRef<(HTMLInputElement | null)[]>([]);
+
+  // Resend cooldown timer
+  const [resendCooldown, setResendCooldown] = useState(0);
+
+  const [showPassword, setShowPassword] = useState(false);
+  const [loading, setLoading] = useState(false);
+  const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  const [successMessage, setSuccessMessage] = useState<string | null>(null);
+
+  // Timer countdown effect for OTP resend
+  useEffect(() => {
+    if (resendCooldown <= 0) return;
+    const interval = setInterval(() => {
+      setResendCooldown((prev) => (prev > 0 ? prev - 1 : 0));
+    }, 1000);
+    return () => clearInterval(interval);
+  }, [resendCooldown]);
+
+  const clearMessages = () => {
+    setErrorMessage(null);
+    setSuccessMessage(null);
+  };
+
+  // Handle Login
+  const handleLogin = async (e: React.FormEvent) => {
+    e.preventDefault();
+    clearMessages();
+
+    if (!email.trim() || !password) {
+      setErrorMessage('يرجى كتابة البريد الإلكتروني وكلمة المرور');
+      return;
+    }
+
+    setLoading(true);
+    try {
+      const res = await signInUser(email, password);
+      if (res.success && res.user) {
+        onAuthSuccess(res.user);
+      } else if (res.needsEmailVerification) {
+        setOtpDigits(['', '', '', '', '', '']);
+        setResendCooldown(60);
+        setMode('verify');
+        setErrorMessage(res.error || 'تم إرسال رمز التحقق السري إلى بريدك الإلكتروني.');
+      } else {
+        setErrorMessage(res.error || 'فشل تسجيل الدخول. تحقق من بياناتك المدخلة');
+      }
+    } catch (err: any) {
+      setErrorMessage(err.message || 'حدث خطأ غير متوقع');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  // Handle Sign Up
+  const handleSignUp = async (e: React.FormEvent) => {
+    e.preventDefault();
+    clearMessages();
+
+    if (!email.trim() || !password) {
+      setErrorMessage('يرجى إدخال البريد الإلكتروني وكلمة المرور');
+      return;
+    }
+
+    if (password.length < 6) {
+      setErrorMessage('يجب أن تكون كلمة المرور 6 أحرف على الأقل لحماية حسابك');
+      return;
+    }
+
+    if (password !== confirmPassword) {
+      setErrorMessage('كلمتا المرور غير متطابقتين');
+      return;
+    }
+
+    setLoading(true);
+    try {
+      const res = await signUpUser(email, password, fullName);
+      if (res.success) {
+        if (res.needsEmailVerification) {
+          setOtpDigits(['', '', '', '', '', '']);
+          setResendCooldown(60);
+          setMode('verify');
+          setSuccessMessage('تم إرسال رمز التأكيد السري حصرياً إلى بريدك الإلكتروني!');
+        } else if (res.user) {
+          onAuthSuccess(res.user);
+        }
+      } else {
+        setErrorMessage(res.error || 'تعذر إنشاء الحساب');
+      }
+    } catch (err: any) {
+      setErrorMessage(err.message || 'حدث خطأ في التسجيل');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  // Handle OTP digit changes
+  const handleOtpChange = (index: number, val: string) => {
+    const clean = val.replace(/\D/g, '');
+    if (!clean) {
+      const copy = [...otpDigits];
+      copy[index] = '';
+      setOtpDigits(copy);
+      return;
+    }
+
+    // Handle paste of 6 digits
+    if (clean.length > 1) {
+      const chars = clean.slice(0, 6).split('');
+      const newDigits = [...otpDigits];
+      chars.forEach((c, i) => {
+        if (i < 6) newDigits[i] = c;
+      });
+      setOtpDigits(newDigits);
+      const nextIndex = Math.min(chars.length, 5);
+      otpInputRefs.current[nextIndex]?.focus();
+      return;
+    }
+
+    const copy = [...otpDigits];
+    copy[index] = clean;
+    setOtpDigits(copy);
+
+    // Auto-advance to next box
+    if (index < 5) {
+      otpInputRefs.current[index + 1]?.focus();
+    }
+  };
+
+  const handleOtpKeyDown = (index: number, e: React.KeyboardEvent<HTMLInputElement>) => {
+    if (e.key === 'Backspace' && !otpDigits[index] && index > 0) {
+      otpInputRefs.current[index - 1]?.focus();
+    }
+  };
+
+  // Submit OTP Verification
+  const handleVerifyCode = async (e: React.FormEvent) => {
+    e.preventDefault();
+    clearMessages();
+
+    const code = otpDigits.join('');
+    if (code.length < 6) {
+      setErrorMessage('يرجى إدخال الرمز السري المكون من 6 أرقام كاملاً من بريدك');
+      return;
+    }
+
+    setLoading(true);
+    try {
+      const res = await verifyEmailCode(email, code);
+      if (res.success && res.user) {
+        setSuccessMessage('تم تأكيد ملكية البريد بنجاح! جاري الدخول...');
+        setTimeout(() => {
+          onAuthSuccess(res.user!);
+        }, 500);
+      } else {
+        setErrorMessage(res.error || 'رمز التأكيد غير صحيح. تأكد من إدخال الرمز من بريدك الوارد');
+      }
+    } catch (err: any) {
+      setErrorMessage(err.message || 'فشل التحقق من الرمز');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  // Resend code to user's email
+  const handleResend = async () => {
+    if (resendCooldown > 0) return;
+    clearMessages();
+    setLoading(true);
+    try {
+      const res = await resendVerificationCode(email);
+      if (res.success) {
+        setResendCooldown(60);
+        setSuccessMessage('تم إرسال رمز تأكيد جديد إلى بريدك الإلكتروني. تفقد صندوق الوارد.');
+      } else {
+        setErrorMessage(res.error || 'تعذر إعادة إرسال الرمز');
+      }
+    } catch (err: any) {
+      setErrorMessage(err.message || 'تعذر إعادة إرسال الرمز');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  // Real Google Sign-In Trigger (Calls official OAuth / Google Identity Services)
+  const handleGoogleAuthClick = async () => {
+    clearMessages();
+    setLoading(true);
+    try {
+      const res = await signInWithGoogle();
+      if (res.success && res.user) {
+        onAuthSuccess(res.user);
+      } else if (res.error) {
+        setErrorMessage(res.error);
+      }
+    } catch (err: any) {
+      setErrorMessage(err.message || 'فشل تسجيل الدخول عبر Google');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  return (
+    <div className="min-h-[calc(100vh-5rem)] flex items-center justify-center px-4 py-12">
+      <div className="w-full max-w-md bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded-3xl shadow-xl overflow-hidden p-6 sm:p-8 space-y-6">
+        
+        {/* Brand / Logo Header */}
+        <div className="text-center space-y-2">
+          <div className="w-14 h-14 rounded-2xl bg-blue-600 dark:bg-blue-500 text-white flex items-center justify-center mx-auto shadow-md shadow-blue-500/20">
+            <Sparkles className="w-7 h-7" />
+          </div>
+          <h2 className="text-2xl font-bold tracking-tight text-zinc-900 dark:text-zinc-100">
+            {mode === 'login' && 'تسجيل الدخول إلى QuickDrop'}
+            {mode === 'signup' && 'إنشاء حساب جديد'}
+            {mode === 'verify' && 'التحقق من البريد الإلكتروني'}
+          </h2>
+          <p className="text-xs sm:text-sm text-zinc-500 dark:text-zinc-400">
+            {mode === 'login' && 'سجّل دخولك للوصول إلى أجهزتك ومشاركة الملفات بأمان تام'}
+            {mode === 'signup' && 'أنشئ حسابك الشخصي لتأمين جلساتك وحفظ ملفاتك وإعداداتك'}
+            {mode === 'verify' && 'أدخل رمز الأمان السري المرسل إلى بريدك الإلكتروني لتفعيل الحساب'}
+          </p>
+        </div>
+
+        {/* Security & Authentication Protocol Badge */}
+        <div className="flex items-center justify-between px-3.5 py-2 rounded-xl bg-zinc-50 dark:bg-zinc-800/60 border border-zinc-200 dark:border-zinc-800 text-xs">
+          <span className="flex items-center gap-1.5 text-zinc-600 dark:text-zinc-400 font-medium">
+            <ShieldCheck className="w-3.5 h-3.5 text-emerald-500" />
+            <span>نظام الأمان:</span>
+          </span>
+          <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full font-mono text-[11px] font-semibold bg-emerald-100 text-emerald-800 dark:bg-emerald-950/80 dark:text-emerald-300">
+            <span className="w-1.5 h-1.5 rounded-full bg-emerald-500" />
+            {isSupabaseConfigured ? 'Supabase Auth Cloud' : 'نظام المصادقة المشفر'}
+          </span>
+        </div>
+
+        {/* Error and Success Alerts */}
+        {errorMessage && (
+          <div className="p-3.5 rounded-xl bg-rose-50 dark:bg-rose-950/50 border border-rose-200 dark:border-rose-900/60 text-xs text-rose-700 dark:text-rose-300 flex items-start gap-2.5">
+            <AlertCircle className="w-4 h-4 shrink-0 mt-0.5" />
+            <span className="leading-relaxed">{errorMessage}</span>
+          </div>
+        )}
+
+        {successMessage && (
+          <div className="p-3.5 rounded-xl bg-emerald-50 dark:bg-emerald-950/50 border border-emerald-200 dark:border-emerald-900/60 text-xs text-emerald-700 dark:text-emerald-300 flex items-start gap-2.5">
+            <CheckCircle2 className="w-4 h-4 shrink-0 mt-0.5" />
+            <span className="leading-relaxed">{successMessage}</span>
+          </div>
+        )}
+
+        {/* REAL GOOGLE AUTH BUTTON */}
+        {mode !== 'verify' && (
+          <div className="space-y-4">
+            <button
+              type="button"
+              onClick={handleGoogleAuthClick}
+              disabled={loading}
+              id="google-signin-btn"
+              className="w-full py-2.5 px-4 rounded-xl bg-white dark:bg-zinc-800 border border-zinc-300 dark:border-zinc-700 hover:bg-zinc-50 dark:hover:bg-zinc-750 active:scale-[0.99] text-zinc-800 dark:text-zinc-100 font-medium text-sm flex items-center justify-center gap-3 shadow-sm hover:shadow transition-all cursor-pointer disabled:opacity-60"
+            >
+              {/* Official Google Color SVG Logo */}
+              <svg className="w-5 h-5 shrink-0" viewBox="0 0 24 24">
+                <path fill="#4285F4" d="M23.745 12.27c0-.7-.06-1.4-.19-2.07H12v4.51h6.6c-.29 1.52-1.14 2.82-2.4 3.68v3.05h3.88c2.27-2.09 3.66-5.17 3.66-9.17z"/>
+                <path fill="#34A853" d="M12 24c3.24 0 5.95-1.08 7.93-2.91l-3.88-3.05c-1.08.72-2.45 1.16-4.05 1.16-3.12 0-5.77-2.1-6.72-4.93H1.25v3.15C3.26 21.36 7.33 24 12 24z"/>
+                <path fill="#FBBC05" d="M5.28 14.27c-.25-.72-.38-1.49-.38-2.27s.13-1.55.38-2.27V6.58H1.25C.45 8.18 0 9.99 0 12s.45 3.82 1.25 5.42l4.03-3.15z"/>
+                <path fill="#EA4335" d="M12 4.75c1.77 0 3.35.61 4.6 1.8l3.42-3.42C17.95 1.19 15.24 0 12 0 7.33 0 3.26 2.64 1.25 6.58l4.03 3.15c.95-2.83 3.6-4.98 6.72-4.98z"/>
+              </svg>
+              <span>المتابعة باستخدام Google (Google Auth)</span>
+            </button>
+
+            {/* Modern Divider */}
+            <div className="relative flex items-center justify-center">
+              <div className="w-full border-t border-zinc-200 dark:border-zinc-800" />
+              <span className="absolute bg-white dark:bg-zinc-900 px-3 text-xs text-zinc-400 font-medium">
+                أو المتابعة بالبريد الإلكتروني
+              </span>
+            </div>
+          </div>
+        )}
+
+        {/* 1. LOGIN FORM */}
+        {mode === 'login' && (
+          <form onSubmit={handleLogin} className="space-y-4">
+            <div className="space-y-1.5">
+              <label className="text-xs font-semibold text-zinc-700 dark:text-zinc-300">
+                البريد الإلكتروني (Email)
+              </label>
+              <div className="relative">
+                <input
+                  type="email"
+                  required
+                  value={email}
+                  onChange={(e) => setEmail(e.target.value)}
+                  placeholder="name@example.com"
+                  className="w-full pl-3 pr-10 py-2.5 rounded-xl bg-zinc-50 dark:bg-zinc-800/80 border border-zinc-200 dark:border-zinc-700/80 text-sm text-zinc-900 dark:text-zinc-100 placeholder-zinc-400 focus:outline-none focus:ring-2 focus:ring-blue-500/50 transition-all text-left"
+                  dir="ltr"
+                  id="login-email-input"
+                />
+                <Mail className="w-4 h-4 text-zinc-400 absolute right-3 top-3 pointer-events-none" />
+              </div>
+            </div>
+
+            <div className="space-y-1.5">
+              <label className="text-xs font-semibold text-zinc-700 dark:text-zinc-300">
+                كلمة المرور (Password)
+              </label>
+              <div className="relative">
+                <input
+                  type={showPassword ? 'text' : 'password'}
+                  required
+                  value={password}
+                  onChange={(e) => setPassword(e.target.value)}
+                  placeholder="••••••••"
+                  className="w-full pl-10 pr-10 py-2.5 rounded-xl bg-zinc-50 dark:bg-zinc-800/80 border border-zinc-200 dark:border-zinc-700/80 text-sm text-zinc-900 dark:text-zinc-100 placeholder-zinc-400 focus:outline-none focus:ring-2 focus:ring-blue-500/50 transition-all text-left"
+                  dir="ltr"
+                  id="login-password-input"
+                />
+                <Lock className="w-4 h-4 text-zinc-400 absolute right-3 top-3 pointer-events-none" />
+                <button
+                  type="button"
+                  onClick={() => setShowPassword(!showPassword)}
+                  className="absolute left-3 top-3 text-zinc-400 hover:text-zinc-600 dark:hover:text-zinc-200 focus:outline-none cursor-pointer"
+                  aria-label="Toggle password visibility"
+                >
+                  {showPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                </button>
+              </div>
+            </div>
+
+            <button
+              type="submit"
+              disabled={loading}
+              className="w-full py-2.5 px-4 rounded-xl bg-blue-600 hover:bg-blue-700 active:scale-[0.99] text-white font-medium text-sm flex items-center justify-center gap-2 shadow-md shadow-blue-600/20 disabled:opacity-60 transition-all cursor-pointer"
+              id="login-submit-btn"
+            >
+              {loading ? (
+                <div className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+              ) : (
+                <>
+                  <span>تسجيل الدخول</span>
+                  <ArrowRight className="w-4 h-4" />
+                </>
+              )}
+            </button>
+
+            {/* REGISTER LINK UNDER LOGIN */}
+            <div className="pt-3 border-t border-zinc-100 dark:border-zinc-800 text-center">
+              <p className="text-xs text-zinc-600 dark:text-zinc-400">
+                ليس لديك حساب؟{' '}
+                <button
+                  type="button"
+                  onClick={() => {
+                    clearMessages();
+                    setMode('signup');
+                  }}
+                  className="text-blue-600 dark:text-blue-400 font-bold hover:underline cursor-pointer transition-colors"
+                  id="go-to-signup-btn"
+                >
+                  إنشاء حساب جديد (Register)
+                </button>
+              </p>
+            </div>
+          </form>
+        )}
+
+        {/* 2. SIGN UP FORM */}
+        {mode === 'signup' && (
+          <form onSubmit={handleSignUp} className="space-y-4">
+            <div className="space-y-1.5">
+              <label className="text-xs font-semibold text-zinc-700 dark:text-zinc-300">
+                الاسم الكامل (Full Name)
+              </label>
+              <div className="relative">
+                <input
+                  type="text"
+                  required
+                  value={fullName}
+                  onChange={(e) => setFullName(e.target.value)}
+                  placeholder="مثال: أحمد محمد"
+                  className="w-full pl-3 pr-10 py-2.5 rounded-xl bg-zinc-50 dark:bg-zinc-800/80 border border-zinc-200 dark:border-zinc-700/80 text-sm text-zinc-900 dark:text-zinc-100 placeholder-zinc-400 focus:outline-none focus:ring-2 focus:ring-blue-500/50 transition-all"
+                  id="signup-name-input"
+                />
+                <User className="w-4 h-4 text-zinc-400 absolute right-3 top-3 pointer-events-none" />
+              </div>
+            </div>
+
+            <div className="space-y-1.5">
+              <label className="text-xs font-semibold text-zinc-700 dark:text-zinc-300">
+                البريد الإلكتروني (Email)
+              </label>
+              <div className="relative">
+                <input
+                  type="email"
+                  required
+                  value={email}
+                  onChange={(e) => setEmail(e.target.value)}
+                  placeholder="name@example.com"
+                  className="w-full pl-3 pr-10 py-2.5 rounded-xl bg-zinc-50 dark:bg-zinc-800/80 border border-zinc-200 dark:border-zinc-700/80 text-sm text-zinc-900 dark:text-zinc-100 placeholder-zinc-400 focus:outline-none focus:ring-2 focus:ring-blue-500/50 transition-all text-left"
+                  dir="ltr"
+                  id="signup-email-input"
+                />
+                <Mail className="w-4 h-4 text-zinc-400 absolute right-3 top-3 pointer-events-none" />
+              </div>
+            </div>
+
+            <div className="space-y-1.5">
+              <label className="text-xs font-semibold text-zinc-700 dark:text-zinc-300">
+                كلمة المرور (Password)
+              </label>
+              <div className="relative">
+                <input
+                  type={showPassword ? 'text' : 'password'}
+                  required
+                  value={password}
+                  onChange={(e) => setPassword(e.target.value)}
+                  placeholder="6 أحرف على الأقل"
+                  className="w-full pl-10 pr-10 py-2.5 rounded-xl bg-zinc-50 dark:bg-zinc-800/80 border border-zinc-200 dark:border-zinc-700/80 text-sm text-zinc-900 dark:text-zinc-100 placeholder-zinc-400 focus:outline-none focus:ring-2 focus:ring-blue-500/50 transition-all text-left"
+                  dir="ltr"
+                  id="signup-password-input"
+                />
+                <Lock className="w-4 h-4 text-zinc-400 absolute right-3 top-3 pointer-events-none" />
+                <button
+                  type="button"
+                  onClick={() => setShowPassword(!showPassword)}
+                  className="absolute left-3 top-3 text-zinc-400 hover:text-zinc-600 dark:hover:text-zinc-200 focus:outline-none cursor-pointer"
+                  aria-label="Toggle password visibility"
+                >
+                  {showPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                </button>
+              </div>
+            </div>
+
+            <div className="space-y-1.5">
+              <label className="text-xs font-semibold text-zinc-700 dark:text-zinc-300">
+                تأكيد كلمة المرور (Confirm Password)
+              </label>
+              <div className="relative">
+                <input
+                  type={showPassword ? 'text' : 'password'}
+                  required
+                  value={confirmPassword}
+                  onChange={(e) => setConfirmPassword(e.target.value)}
+                  placeholder="أعد كتابة كلمة المرور"
+                  className="w-full pl-3 pr-10 py-2.5 rounded-xl bg-zinc-50 dark:bg-zinc-800/80 border border-zinc-200 dark:border-zinc-700/80 text-sm text-zinc-900 dark:text-zinc-100 placeholder-zinc-400 focus:outline-none focus:ring-2 focus:ring-blue-500/50 transition-all text-left"
+                  dir="ltr"
+                  id="signup-confirm-password-input"
+                />
+                <KeyRound className="w-4 h-4 text-zinc-400 absolute right-3 top-3 pointer-events-none" />
+              </div>
+            </div>
+
+            <button
+              type="submit"
+              disabled={loading}
+              className="w-full py-2.5 px-4 rounded-xl bg-blue-600 hover:bg-blue-700 active:scale-[0.99] text-white font-medium text-sm flex items-center justify-center gap-2 shadow-md shadow-blue-600/20 disabled:opacity-60 transition-all cursor-pointer"
+              id="signup-submit-btn"
+            >
+              {loading ? (
+                <div className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+              ) : (
+                <>
+                  <span>إرسال رمز التأكيد والمتابعة</span>
+                  <Send className="w-4 h-4" />
+                </>
+              )}
+            </button>
+
+            <div className="pt-3 border-t border-zinc-100 dark:border-zinc-800 text-center">
+              <p className="text-xs text-zinc-600 dark:text-zinc-400">
+                لديك حساب بالفعل؟{' '}
+                <button
+                  type="button"
+                  onClick={() => {
+                    clearMessages();
+                    setMode('login');
+                  }}
+                  className="text-blue-600 dark:text-blue-400 font-bold hover:underline cursor-pointer transition-colors"
+                  id="back-to-login-btn"
+                >
+                  تسجيل الدخول (Sign in)
+                </button>
+              </p>
+            </div>
+          </form>
+        )}
+
+        {/* 3. STRICT OTP VERIFICATION (NO CODE ON SCREEN - EMAIL ONLY!) */}
+        {mode === 'verify' && (
+          <form onSubmit={handleVerifyCode} className="space-y-5">
+            {/* Secure Email Destination Badge */}
+            <div className="p-4 rounded-2xl bg-zinc-50 dark:bg-zinc-800/80 border border-zinc-200 dark:border-zinc-700/80 space-y-2 text-center">
+              <div className="w-10 h-10 rounded-full bg-blue-100 dark:bg-blue-900/50 text-blue-600 dark:text-blue-400 flex items-center justify-center mx-auto">
+                <Mail className="w-5 h-5" />
+              </div>
+              <div className="text-xs text-zinc-600 dark:text-zinc-300">
+                تم إرسال رمز الأمان المكون من 6 أرقام إلى:
+              </div>
+              <div className="font-mono font-bold text-sm text-blue-600 dark:text-blue-400 bg-white dark:bg-zinc-900/80 py-1 px-3 rounded-lg border border-zinc-200 dark:border-zinc-800 inline-block" dir="ltr">
+                {email}
+              </div>
+              <div className="flex items-center justify-center gap-1.5 text-[11px] text-zinc-500 dark:text-zinc-400 pt-1">
+                <ShieldCheck className="w-3.5 h-3.5 text-emerald-500 shrink-0" />
+                <span>الرمز سري ومحمي؛ تفقد صندوق البريد الوارد الخاص بك</span>
+              </div>
+            </div>
+
+            {/* 6-Digit Segmented OTP Input */}
+            <div className="space-y-2">
+              <label className="text-xs font-semibold text-zinc-700 dark:text-zinc-300 block text-center">
+                أدخل رمز التأكيد (OTP)
+              </label>
+              <div className="flex justify-center items-center gap-2 sm:gap-2.5" dir="ltr">
+                {otpDigits.map((digit, idx) => (
+                  <input
+                    key={idx}
+                    ref={(el) => { otpInputRefs.current[idx] = el; }}
+                    type="text"
+                    inputMode="numeric"
+                    pattern="[0-9]*"
+                    maxLength={1}
+                    value={digit}
+                    onChange={(e) => handleOtpChange(idx, e.target.value)}
+                    onKeyDown={(e) => handleOtpKeyDown(idx, e)}
+                    className="w-11 h-13 sm:w-12 sm:h-14 text-center text-xl sm:text-2xl font-mono font-bold rounded-xl bg-zinc-50 dark:bg-zinc-800/90 border border-zinc-200 dark:border-zinc-700 text-zinc-900 dark:text-zinc-100 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all shadow-inner"
+                    id={`otp-digit-${idx}`}
+                  />
+                ))}
+              </div>
+            </div>
+
+            <button
+              type="submit"
+              disabled={loading || otpDigits.join('').length < 6}
+              className="w-full py-2.5 px-4 rounded-xl bg-emerald-600 hover:bg-emerald-700 active:scale-[0.99] text-white font-medium text-sm flex items-center justify-center gap-2 shadow-md shadow-emerald-600/20 disabled:opacity-50 transition-all cursor-pointer"
+              id="verify-submit-btn"
+            >
+              {loading ? (
+                <div className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+              ) : (
+                <>
+                  <CheckCircle2 className="w-4 h-4" />
+                  <span>تأكيد الحساب والدخول</span>
+                </>
+              )}
+            </button>
+
+            {/* Resend Cooldown and Back to Login */}
+            <div className="flex items-center justify-between text-xs pt-1">
+              <button
+                type="button"
+                onClick={handleResend}
+                disabled={loading || resendCooldown > 0}
+                className="flex items-center gap-1.5 text-zinc-600 dark:text-zinc-400 hover:text-blue-600 dark:hover:text-blue-400 font-medium cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
+                id="resend-code-btn"
+              >
+                <RefreshCw className={`w-3.5 h-3.5 ${loading ? 'animate-spin' : ''}`} />
+                <span>
+                  {resendCooldown > 0 ? `إعادة الإرسال بعد (${resendCooldown}ث)` : 'إعادة إرسال الرمز'}
+                </span>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => {
+                  clearMessages();
+                  setMode('login');
+                }}
+                className="text-blue-600 dark:text-blue-400 font-medium hover:underline cursor-pointer"
+              >
+                تغيير البريد / العودة
+              </button>
+            </div>
+          </form>
+        )}
+      </div>
+    </div>
+  );
+};

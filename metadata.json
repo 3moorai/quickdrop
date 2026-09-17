@@ -1,0 +1,6 @@
+{
+  "name": "QuickDrop",
+  "description": "Fast, private cross-device peer-to-peer file and text transfer powered by WebRTC with user accounts and profile management",
+  "requestFramePermissions": ["camera"],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
