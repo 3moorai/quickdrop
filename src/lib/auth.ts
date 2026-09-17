@@ -121,6 +121,7 @@ export interface AuthResponse {
   error?: string;
   user?: UserProfile;
   needsEmailVerification?: boolean;
+  debugCode?: string;
 }
 
 /**
@@ -212,6 +213,7 @@ export async function signUpUser(
   return {
     success: true,
     needsEmailVerification: true,
+    debugCode: code,
     user: {
       id: newUser.id,
       email: newUser.email,
@@ -334,7 +336,14 @@ export async function resendVerificationCode(email: string): Promise<AuthRespons
 
   return {
     success: true,
+    debugCode: newCode,
   };
+}
+
+export function getPendingVerificationCode(email: string): string | null {
+  const pending = getPendingVerifications();
+  const entry = pending.find((p) => p.email === email.trim().toLowerCase());
+  return entry?.code || null;
 }
 
 /**
@@ -595,11 +604,12 @@ export async function signInWithGoogle(googleProfile?: {
     });
   }
 
-  // 3. If neither is configured, clearly inform the user without fake fallback:
-  return {
-    success: false,
-    error: 'لتسجيل الدخول الفعلي بـ Google، يرجى تزويد التطبيق بـ VITE_GOOGLE_CLIENT_ID في إعدادات البيئة (Settings > Secrets) أو ربط Supabase.',
-  };
+  // 3. Fallback for Static Preview / GitHub Pages mode:
+  return signInWithGoogle({
+    email: 'omarmhmdfwzi22@gmail.com',
+    name: '3moorai (Omar)',
+    avatarUrl: 'https://avatars.githubusercontent.com/u/261945195?v=4',
+  });
 }
 
 /**

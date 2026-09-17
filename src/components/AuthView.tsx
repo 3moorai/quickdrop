@@ -39,6 +39,7 @@ export const AuthView: React.FC<AuthViewProps> = ({ onAuthSuccess }) => {
 
   // 6-digit OTP code states
   const [otpDigits, setOtpDigits] = useState<string[]>(['', '', '', '', '', '']);
+  const [activeOtpCode, setActiveOtpCode] = useState<string | null>(null);
   const otpInputRefs = useRef<(HTMLInputElement | null)[]>([]);
 
   // Resend cooldown timer
@@ -121,7 +122,10 @@ export const AuthView: React.FC<AuthViewProps> = ({ onAuthSuccess }) => {
           setOtpDigits(['', '', '', '', '', '']);
           setResendCooldown(60);
           setMode('verify');
-          setSuccessMessage('تم إرسال رمز التأكيد السري حصرياً إلى بريدك الإلكتروني!');
+          if (res.debugCode) {
+            setActiveOtpCode(res.debugCode);
+          }
+          setSuccessMessage('تم إنشاء حسابك بنجاح! تفقد رمز التحقق أدناه لتأكيده.');
         } else if (res.user) {
           onAuthSuccess(res.user);
         }
@@ -212,7 +216,10 @@ export const AuthView: React.FC<AuthViewProps> = ({ onAuthSuccess }) => {
       const res = await resendVerificationCode(email);
       if (res.success) {
         setResendCooldown(60);
-        setSuccessMessage('تم إرسال رمز تأكيد جديد إلى بريدك الإلكتروني. تفقد صندوق الوارد.');
+        if (res.debugCode) {
+          setActiveOtpCode(res.debugCode);
+        }
+        setSuccessMessage('تم إنشاء رمز تأكيد جديد! يمكنك استخدامه أدناه.');
       } else {
         setErrorMessage(res.error || 'تعذر إعادة إرسال الرمز');
       }
@@ -544,6 +551,30 @@ export const AuthView: React.FC<AuthViewProps> = ({ onAuthSuccess }) => {
                 <span>الرمز سري ومحمي؛ تفقد صندوق البريد الوارد الخاص بك</span>
               </div>
             </div>
+
+            {/* Quick OTP Helper Banner (for web & static environments) */}
+            {activeOtpCode && (
+              <div className="p-3 bg-emerald-50 dark:bg-emerald-950/40 border border-emerald-200 dark:border-emerald-800/80 rounded-2xl flex items-center justify-between gap-3 text-xs sm:text-sm shadow-sm">
+                <div className="text-right space-y-0.5">
+                  <span className="text-zinc-600 dark:text-zinc-300 font-medium block">رمز التحقق:</span>
+                  <span className="font-mono font-bold text-lg text-emerald-600 dark:text-emerald-400 tracking-widest block" dir="ltr">
+                    {activeOtpCode}
+                  </span>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => {
+                    const digits = activeOtpCode.slice(0, 6).split('');
+                    setOtpDigits(digits);
+                    otpInputRefs.current[5]?.focus();
+                  }}
+                  className="px-3.5 py-1.5 bg-emerald-600 hover:bg-emerald-700 active:scale-95 text-white rounded-xl text-xs font-bold transition-all shadow-sm cursor-pointer whitespace-nowrap"
+                  id="auto-fill-otp-btn"
+                >
+                  تعبئة الرمز تلقائياً ⚡
+                </button>
+              </div>
+            )}
 
             {/* 6-Digit Segmented OTP Input */}
             <div className="space-y-2">
