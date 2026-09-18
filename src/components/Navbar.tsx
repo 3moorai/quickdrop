@@ -14,6 +14,7 @@ import {
   LogOut
 } from 'lucide-react';
 import { AppTab, ConnectionState, DeviceInfo, UserProfile } from '../types.ts';
+import { UserAvatar } from './UserAvatar.tsx';
 
 interface NavbarProps {
   currentTab: AppTab;
@@ -204,16 +205,12 @@ export const Navbar: React.FC<NavbarProps> = ({
                 id="nav-tab-profile"
                 title="الحساب الشخصي"
               >
-                {currentUser.avatarUrl ? (
-                  <img
-                    src={currentUser.avatarUrl}
-                    alt={currentUser.name}
-                    className="w-4 h-4 rounded-full object-cover border border-blue-500"
-                    referrerPolicy="no-referrer"
-                  />
-                ) : (
-                  <User className="w-3.5 h-3.5 text-blue-500" />
-                )}
+                <UserAvatar
+                  name={currentUser.name}
+                  avatarUrl={currentUser.avatarUrl}
+                  size="xs"
+                  className="border border-blue-500/40"
+                />
                 <span className="max-w-[80px] sm:max-w-[110px] truncate">{currentUser.name || 'حسابي'}</span>
               </button>
             )}

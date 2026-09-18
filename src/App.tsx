@@ -26,7 +26,7 @@ import {
 import { getLocalDeviceInfo } from './lib/device.ts';
 import { SignalingClient } from './lib/signaling.ts';
 import { WebRTCManager } from './lib/webrtc.ts';
-import { getActiveUser, signOutUser } from './lib/auth.ts';
+import { getActiveUser, signOutUser, initAuthListener } from './lib/auth.ts';
 import { SupabaseService } from './lib/supabase-service.ts';
 
 export default function App() {
@@ -85,7 +85,7 @@ export default function App() {
     }
   }, []);
 
-  // Check current authenticated user session on mount
+  // Check current authenticated user session on mount and listen for real-time auth changes
   useEffect(() => {
     let mounted = true;
     getActiveUser()
@@ -100,8 +100,16 @@ export default function App() {
         if (mounted) setIsAuthLoading(false);
       });
 
+    // Listen to real-time auth session updates (token refresh, user updates, sign in/out)
+    const unsubscribe = initAuthListener((user) => {
+      if (mounted) {
+        setCurrentUser(user);
+      }
+    });
+
     return () => {
       mounted = false;
+      unsubscribe();
     };
   }, []);
 

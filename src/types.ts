@@ -88,6 +88,26 @@ export interface UserProfile {
   avatarUrl?: string;
   deviceName?: string;
   createdAt?: string;
+  updatedAt?: string;
   emailConfirmed?: boolean;
   provider?: 'email' | 'google';
+}
+
+export interface SignUpOptions {
+  email: string;
+  password: string;
+  fullName: string;
+  avatarFile?: File | Blob | null;
+  deviceName?: string;
+}
+
+export interface PasswordStrength {
+  score: number; // 0 to 4
+  label: 'ضعيفة جداً' | 'ضعيفة' | 'متوسطة' | 'جيدة' | 'قوية';
+  color: string;
+  hasMinLength: boolean;
+  hasUppercase: boolean;
+  hasLowercase: boolean;
+  hasNumber: boolean;
+  hasSpecialChar: boolean;
 }

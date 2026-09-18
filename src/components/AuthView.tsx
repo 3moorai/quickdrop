@@ -12,7 +12,14 @@ import {
   Sparkles, 
   RefreshCw,
   Send,
-  ShieldCheck
+  ShieldCheck,
+  Camera,
+  Laptop,
+  Copy,
+  Check,
+  Code2,
+  Trash2,
+  UploadCloud
 } from 'lucide-react';
 import { 
   signInUser, 
@@ -25,9 +32,12 @@ import {
   saveSupabaseConfig,
   clearSupabaseConfig,
   getPendingVerificationCode,
-  checkEmailConfirmationStatus
+  checkEmailConfirmationStatus,
+  evaluatePasswordStrength,
+  SQL_PROFILES_MIGRATION
 } from '../lib/auth.ts';
-import { UserProfile } from '../types.ts';
+import { UserProfile, PasswordStrength } from '../types.ts';
+import { UserAvatar } from './UserAvatar.tsx';
 
 interface AuthViewProps {
   onAuthSuccess: (user: UserProfile) => void;
@@ -41,6 +51,12 @@ export const AuthView: React.FC<AuthViewProps> = ({ onAuthSuccess }) => {
   const [password, setPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
   const [fullName, setFullName] = useState('');
+  const [deviceName, setDeviceName] = useState('جهازي (My Device)');
+
+  // Avatar upload state for Registration
+  const [avatarFile, setAvatarFile] = useState<File | null>(null);
+  const [avatarPreview, setAvatarPreview] = useState<string | null>(null);
+  const avatarInputRef = useRef<HTMLInputElement>(null);
 
   // 6-digit OTP code states
   const [otpDigits, setOtpDigits] = useState<string[]>(['', '', '', '', '', '']);
@@ -58,10 +74,41 @@ export const AuthView: React.FC<AuthViewProps> = ({ onAuthSuccess }) => {
   // Supabase Configuration States
   const [hasSupabase, setHasSupabase] = useState<boolean>(() => checkIsSupabaseConfigured());
   const [showSupabaseModal, setShowSupabaseModal] = useState<boolean>(false);
+  const [showSqlModal, setShowSqlModal] = useState<boolean>(false);
+  const [copiedSql, setCopiedSql] = useState<boolean>(false);
+
   const [supabaseUrlInput, setSupabaseUrlInput] = useState<string>(() => getSupabaseCredentials().url);
   const [supabaseKeyInput, setSupabaseKeyInput] = useState<string>(() => getSupabaseCredentials().anonKey);
   const [supabaseConfigSuccess, setSupabaseConfigSuccess] = useState<string | null>(null);
   const [supabaseConfigError, setSupabaseConfigError] = useState<string | null>(null);
+
+  // Check if user arrived via QR Code scan with join/code parameters
+  const [incomingPairCode, setIncomingPairCode] = useState<string | null>(null);
+  useEffect(() => {
+    try {
+      const params = new URLSearchParams(window.location.search);
+      const code = params.get('code');
+      const join = params.get('join');
+      if (code || join) {
+        setIncomingPairCode(code || join);
+      }
+    } catch {}
+  }, []);
+
+  const handleQuickGuestPair = () => {
+    const guestUser: UserProfile = {
+      id: 'guest_mobile_' + Math.random().toString(36).substring(2, 9),
+      email: 'mobile@quickdrop.local',
+      name: 'هاتف محمول (Mobile)',
+      deviceName: 'هاتف محمول (Sender)',
+      createdAt: new Date().toISOString(),
+      emailConfirmed: true,
+    };
+    try {
+      localStorage.setItem('quickdrop_current_user_session', JSON.stringify(guestUser));
+    } catch {}
+    onAuthSuccess(guestUser);
+  };
 
   const handleSaveSupabaseConfig = () => {
     setSupabaseConfigError(null);
@@ -135,34 +182,6 @@ export const AuthView: React.FC<AuthViewProps> = ({ onAuthSuccess }) => {
     onAuthSuccess(fallbackUser);
   };
 
-  // Check if user arrived via QR Code scan with join/code parameters
-  const [incomingPairCode, setIncomingPairCode] = useState<string | null>(null);
-  useEffect(() => {
-    try {
-      const params = new URLSearchParams(window.location.search);
-      const code = params.get('code');
-      const join = params.get('join');
-      if (code || join) {
-        setIncomingPairCode(code || join);
-      }
-    } catch {}
-  }, []);
-
-  const handleQuickGuestPair = () => {
-    const guestUser: UserProfile = {
-      id: 'guest_mobile_' + Math.random().toString(36).substring(2, 9),
-      email: 'mobile@quickdrop.local',
-      name: 'هاتف محمول (Mobile)',
-      deviceName: 'هاتف محمول (Sender)',
-      createdAt: new Date().toISOString(),
-      emailConfirmed: true,
-    };
-    try {
-      localStorage.setItem('quickdrop_current_user_session', JSON.stringify(guestUser));
-    } catch {}
-    onAuthSuccess(guestUser);
-  };
-
   // Timer countdown effect for OTP resend
   useEffect(() => {
     if (resendCooldown <= 0) return;
@@ -177,13 +196,42 @@ export const AuthView: React.FC<AuthViewProps> = ({ onAuthSuccess }) => {
     setSuccessMessage(null);
   };
 
+  // Avatar file selection handler
+  const handleAvatarFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    if (!file.type.startsWith('image/')) {
+      setErrorMessage('يرجى اختيار ملف صورة صالح (JPEG, PNG, WebP, GIF)');
+      return;
+    }
+
+    if (file.size > 5 * 1024 * 1024) {
+      setErrorMessage('حجم الصورة كبير جداً، يرجى اختيار صورة أقل من 5 ميجابايت');
+      return;
+    }
+
+    setAvatarFile(file);
+    const previewUrl = URL.createObjectURL(file);
+    setAvatarPreview(previewUrl);
+    setErrorMessage(null);
+  };
+
+  const handleRemoveAvatar = () => {
+    setAvatarFile(null);
+    if (avatarPreview) {
+      URL.revokeObjectURL(avatarPreview);
+    }
+    setAvatarPreview(null);
+  };
+
   // Handle Login
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
     clearMessages();
 
     if (!email.trim() || !password) {
-      setErrorMessage('يرجى كتابة البريد الإلكتروني وكلمة المرور');
+      setErrorMessage('يرجى إدخال البريد الإلكتروني وكلمة المرور');
       return;
     }
 
@@ -193,10 +241,11 @@ export const AuthView: React.FC<AuthViewProps> = ({ onAuthSuccess }) => {
       if (res.success && res.user) {
         onAuthSuccess(res.user);
       } else if (res.needsEmailVerification) {
-        setOtpDigits(['', '', '', '', '', '']);
-        setResendCooldown(60);
         setMode('verify');
-        setErrorMessage(res.error || 'تم إرسال رمز التحقق السري إلى بريدك الإلكتروني.');
+        if (res.debugCode) {
+          setActiveOtpCode(res.debugCode);
+        }
+        setErrorMessage(res.error || 'يرجى تأكيد بريدك الإلكتروني أولاً للدخول');
       } else {
         setErrorMessage(res.error || 'فشل تسجيل الدخول. تحقق من بياناتك المدخلة');
       }
@@ -229,7 +278,14 @@ export const AuthView: React.FC<AuthViewProps> = ({ onAuthSuccess }) => {
 
     setLoading(true);
     try {
-      const res = await signUpUser(email, password, fullName);
+      const res = await signUpUser({
+        email,
+        password,
+        fullName,
+        avatarFile,
+        deviceName,
+      });
+
       if (res.success) {
         if (res.needsEmailVerification) {
           setOtpDigits(['', '', '', '', '', '']);
@@ -259,32 +315,26 @@ export const AuthView: React.FC<AuthViewProps> = ({ onAuthSuccess }) => {
   // Handle OTP digit changes
   const handleOtpChange = (index: number, val: string) => {
     const clean = val.replace(/\D/g, '');
-    if (!clean) {
-      const copy = [...otpDigits];
-      copy[index] = '';
-      setOtpDigits(copy);
-      return;
-    }
+    if (!clean && val !== '') return;
 
-    // Handle paste of 6 digits
+    const newDigits = [...otpDigits];
+
     if (clean.length > 1) {
-      const chars = clean.slice(0, 6).split('');
-      const newDigits = [...otpDigits];
-      chars.forEach((c, i) => {
-        if (i < 6) newDigits[i] = c;
-      });
+      // Handle paste of complete 6-digit code
+      const pasted = clean.slice(0, 6).split('');
+      for (let i = 0; i < 6; i++) {
+        newDigits[i] = pasted[i] || '';
+      }
       setOtpDigits(newDigits);
-      const nextIndex = Math.min(chars.length, 5);
-      otpInputRefs.current[nextIndex]?.focus();
+      const nextIdx = Math.min(pasted.length, 5);
+      otpInputRefs.current[nextIdx]?.focus();
       return;
     }
 
-    const copy = [...otpDigits];
-    copy[index] = clean;
-    setOtpDigits(copy);
+    newDigits[index] = clean;
+    setOtpDigits(newDigits);
 
-    // Auto-advance to next box
-    if (index < 5) {
+    if (clean && index < 5) {
       otpInputRefs.current[index + 1]?.focus();
     }
   };
@@ -295,27 +345,36 @@ export const AuthView: React.FC<AuthViewProps> = ({ onAuthSuccess }) => {
     }
   };
 
-  // Submit OTP Verification
-  const handleVerifyCode = async (e: React.FormEvent) => {
+  // Auto fill active OTP code
+  const handleAutoFillCode = () => {
+    if (!activeOtpCode) return;
+    const digits = activeOtpCode.slice(0, 6).split('');
+    const newDigits = [...otpDigits];
+    for (let i = 0; i < 6; i++) {
+      newDigits[i] = digits[i] || '';
+    }
+    setOtpDigits(newDigits);
+    otpInputRefs.current[5]?.focus();
+  };
+
+  // Handle OTP Verification Submit
+  const handleVerifyOtp = async (e: React.FormEvent) => {
     e.preventDefault();
     clearMessages();
 
-    const code = otpDigits.join('');
-    if (code.length < 6) {
-      setErrorMessage('يرجى إدخال الرمز السري المكون من 6 أرقام كاملاً من بريدك');
+    const fullCode = otpDigits.join('');
+    if (fullCode.length !== 6) {
+      setErrorMessage('يرجى إدخال رمز التحقق المكون من 6 أرقام كاملاً');
       return;
     }
 
     setLoading(true);
     try {
-      const res = await verifyEmailCode(email, code);
+      const res = await verifyEmailCode(email, fullCode);
       if (res.success && res.user) {
-        setSuccessMessage('تم تأكيد ملكية البريد بنجاح! جاري الدخول...');
-        setTimeout(() => {
-          onAuthSuccess(res.user!);
-        }, 500);
+        onAuthSuccess(res.user);
       } else {
-        setErrorMessage(res.error || 'رمز التأكيد غير صحيح. تأكد من إدخال الرمز من بريدك الوارد');
+        setErrorMessage(res.error || 'رمز التحقق غير صحيح أو انتهت صلاحيته');
       }
     } catch (err: any) {
       setErrorMessage(err.message || 'فشل التحقق من الرمز');
@@ -324,7 +383,7 @@ export const AuthView: React.FC<AuthViewProps> = ({ onAuthSuccess }) => {
     }
   };
 
-  // Resend code to user's email
+  // Resend code
   const handleResend = async () => {
     if (resendCooldown > 0) return;
     clearMessages();
@@ -336,22 +395,17 @@ export const AuthView: React.FC<AuthViewProps> = ({ onAuthSuccess }) => {
         if (res.debugCode) {
           setActiveOtpCode(res.debugCode);
         }
-        setSuccessMessage(
-          hasSupabase
-            ? 'تم إرسال رمز تأكيد جديد إلى بريدك الإلكتروني.'
-            : 'تم إنشاء رمز تأكيد جديد! يمكنك استخدامه أدناه مباشرة.'
-        );
+        setSuccessMessage('تم إرسال رمز أمان جديد بنجاح إلى بريدك الإلكتروني!');
       } else {
-        setErrorMessage(res.error || 'تعذر إعادة إرسال الرمز');
+        setErrorMessage(res.error || 'فشل إعادة الإرسال');
       }
     } catch (err: any) {
-      setErrorMessage(err.message || 'تعذر إعادة إرسال الرمز');
+      setErrorMessage(err.message || 'حدث خطأ في إعادة الإرسال');
     } finally {
       setLoading(false);
     }
   };
 
-  // Real Google Sign-In Trigger (Calls official OAuth / Google Identity Services)
   const handleGoogleAuthClick = async () => {
     clearMessages();
     setLoading(true);
@@ -359,60 +413,78 @@ export const AuthView: React.FC<AuthViewProps> = ({ onAuthSuccess }) => {
       const res = await signInWithGoogle();
       if (res.success && res.user) {
         onAuthSuccess(res.user);
-      } else if (res.error) {
+      } else if (!res.success && res.error) {
         setErrorMessage(res.error);
       }
     } catch (err: any) {
-      setErrorMessage(err.message || 'فشل تسجيل الدخول عبر Google');
+      setErrorMessage(err.message || 'فشل تشغيل Google Auth');
     } finally {
       setLoading(false);
     }
   };
 
+  const handleCopySql = async () => {
+    try {
+      await navigator.clipboard.writeText(SQL_PROFILES_MIGRATION.trim());
+      setCopiedSql(true);
+      setTimeout(() => setCopiedSql(false), 2500);
+    } catch {}
+  };
+
+  const passwordStrength: PasswordStrength = evaluatePasswordStrength(password);
+
   return (
-    <div className="min-h-[calc(100vh-5rem)] flex items-center justify-center px-4 py-12">
-      <div className="w-full max-w-md bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded-3xl shadow-xl overflow-hidden p-6 sm:p-8 space-y-6">
-        
-        {/* Brand / Logo Header */}
+    <div className="w-full max-w-md mx-auto p-4">
+      <div className="bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded-3xl p-6 sm:p-8 shadow-xl space-y-6">
+        {/* Top Header */}
         <div className="text-center space-y-2">
-          <div className="w-14 h-14 rounded-2xl bg-blue-600 dark:bg-blue-500 text-white flex items-center justify-center mx-auto shadow-md shadow-blue-500/20">
-            <Sparkles className="w-7 h-7" />
+          <div className="w-12 h-12 rounded-2xl bg-gradient-to-tr from-blue-600 to-indigo-600 text-white flex items-center justify-center mx-auto shadow-md">
+            <Lock className="w-6 h-6" />
           </div>
-          <h2 className="text-2xl font-bold tracking-tight text-zinc-900 dark:text-zinc-100">
+          <h2 className="text-xl sm:text-2xl font-black tracking-tight text-zinc-900 dark:text-zinc-100">
             {mode === 'login' && 'تسجيل الدخول إلى QuickDrop'}
             {mode === 'signup' && 'إنشاء حساب جديد'}
-            {mode === 'verify' && 'التحقق من البريد الإلكتروني'}
+            {mode === 'verify' && 'تأكيد الحساب والبريد'}
           </h2>
-          <p className="text-xs sm:text-sm text-zinc-500 dark:text-zinc-400">
-            {mode === 'login' && 'سجّل دخولك للوصول إلى أجهزتك ومشاركة الملفات بأمان تام'}
-            {mode === 'signup' && 'أنشئ حسابك الشخصي لتأمين جلساتك وحفظ ملفاتك وإعداداتك'}
-            {mode === 'verify' && 'أدخل رمز الأمان السري المرسل إلى بريدك الإلكتروني لتفعيل الحساب'}
+          <p className="text-xs text-zinc-500 dark:text-zinc-400">
+            {mode === 'login' && 'أدخل بريدك الإلكتروني وكلمة المرور لمتابعة نقل ملفاتك'}
+            {mode === 'signup' && 'أنشئ حسابك الشخصي لتأمين جلساتك وحفظ ملفاتك وصورتك الرمزية'}
+            {mode === 'verify' && 'أدخل رمز الأمان السري المرسل إلى بريدك لتفعيل الحساب'}
           </p>
         </div>
 
-        {/* Security & Authentication Protocol Badge */}
+        {/* Security & Supabase Status Badge */}
         <div className="flex items-center justify-between px-3.5 py-2 rounded-xl bg-zinc-50 dark:bg-zinc-800/60 border border-zinc-200 dark:border-zinc-800 text-xs">
           <span className="flex items-center gap-1.5 text-zinc-600 dark:text-zinc-400 font-medium">
             <ShieldCheck className="w-3.5 h-3.5 text-emerald-500" />
-            <span>نظام الأمان:</span>
+            <span>نظام المصادقة:</span>
           </span>
-          <div className="flex items-center gap-2">
-            <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full font-mono text-[11px] font-semibold bg-emerald-100 text-emerald-800 dark:bg-emerald-950/80 dark:text-emerald-300">
+          <div className="flex items-center gap-1.5">
+            <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full font-mono text-[11px] font-semibold bg-emerald-100 text-emerald-800 dark:bg-emerald-950/80 dark:text-emerald-300">
               <span className="w-1.5 h-1.5 rounded-full bg-emerald-500" />
-              {hasSupabase ? 'Supabase Auth Cloud' : 'نظام المصادقة المشفر'}
+              {hasSupabase ? 'Supabase Auth' : 'مشفر محلياً'}
             </span>
             <button
               type="button"
               onClick={() => setShowSupabaseModal(true)}
               className="px-2 py-0.5 rounded-md bg-zinc-200 hover:bg-zinc-300 dark:bg-zinc-700 dark:hover:bg-zinc-600 text-zinc-700 dark:text-zinc-200 text-[11px] font-medium transition-colors cursor-pointer"
-              title="إعدادات وربط Supabase"
+              title="إعدادات Supabase"
             >
-              ⚙️ {hasSupabase ? 'إعدادات' : 'ربط Supabase'}
+              ⚙️ {hasSupabase ? 'إعدادات' : 'ربط'}
+            </button>
+            <button
+              type="button"
+              onClick={() => setShowSqlModal(true)}
+              className="px-2 py-0.5 rounded-md bg-blue-100 hover:bg-blue-200 dark:bg-blue-900/60 dark:hover:bg-blue-800 text-blue-700 dark:text-blue-200 text-[11px] font-medium transition-colors cursor-pointer flex items-center gap-1"
+              title="عرض كود SQL لإنشاء الجداول في Supabase"
+            >
+              <Code2 className="w-3 h-3" />
+              <span>SQL</span>
             </button>
           </div>
         </div>
 
-        {/* Error and Success Alerts */}
+        {/* Alerts */}
         {errorMessage && (
           <div className="p-3.5 rounded-xl bg-rose-50 dark:bg-rose-950/50 border border-rose-200 dark:border-rose-900/60 text-xs text-rose-700 dark:text-rose-300 flex items-start gap-2.5">
             <AlertCircle className="w-4 h-4 shrink-0 mt-0.5" />
@@ -427,7 +499,7 @@ export const AuthView: React.FC<AuthViewProps> = ({ onAuthSuccess }) => {
           </div>
         )}
 
-        {/* QR CODE INSTANT MOBILE PAIRING BANNER */}
+        {/* QR Code Instant Mobile Pairing Banner */}
         {incomingPairCode && mode !== 'verify' && (
           <div className="p-4 rounded-2xl bg-gradient-to-br from-blue-600 to-indigo-600 text-white shadow-lg space-y-3 border border-blue-400/30">
             <div className="flex items-center justify-between">
@@ -461,9 +533,8 @@ export const AuthView: React.FC<AuthViewProps> = ({ onAuthSuccess }) => {
               onClick={handleGoogleAuthClick}
               disabled={loading}
               id="google-signin-btn"
-              className="w-full py-2.5 px-4 rounded-xl bg-white dark:bg-zinc-800 border border-zinc-300 dark:border-zinc-700 hover:bg-zinc-50 dark:hover:bg-zinc-750 active:scale-[0.99] text-zinc-800 dark:text-zinc-100 font-medium text-sm flex items-center justify-center gap-3 shadow-sm hover:shadow transition-all cursor-pointer disabled:opacity-60"
+              className="w-full py-2.5 px-4 rounded-xl bg-white dark:bg-zinc-800 border border-zinc-300 dark:border-zinc-700 hover:bg-zinc-50 dark:hover:bg-zinc-750 active:scale-[0.99] text-zinc-800 dark:text-zinc-100 font-medium text-sm flex items-center justify-center gap-3 shadow-xs hover:shadow transition-all cursor-pointer disabled:opacity-60"
             >
-              {/* Official Google Color SVG Logo */}
               <svg className="w-5 h-5 shrink-0" viewBox="0 0 24 24">
                 <path fill="#4285F4" d="M23.745 12.27c0-.7-.06-1.4-.19-2.07H12v4.51h6.6c-.29 1.52-1.14 2.82-2.4 3.68v3.05h3.88c2.27-2.09 3.66-5.17 3.66-9.17z"/>
                 <path fill="#34A853" d="M12 24c3.24 0 5.95-1.08 7.93-2.91l-3.88-3.05c-1.08.72-2.45 1.16-4.05 1.16-3.12 0-5.77-2.1-6.72-4.93H1.25v3.15C3.26 21.36 7.33 24 12 24z"/>
@@ -473,7 +544,6 @@ export const AuthView: React.FC<AuthViewProps> = ({ onAuthSuccess }) => {
               <span>المتابعة باستخدام Google (Google Auth)</span>
             </button>
 
-            {/* Modern Divider */}
             <div className="relative flex items-center justify-center">
               <div className="w-full border-t border-zinc-200 dark:border-zinc-800" />
               <span className="absolute bg-white dark:bg-zinc-900 px-3 text-xs text-zinc-400 font-medium">
@@ -525,7 +595,7 @@ export const AuthView: React.FC<AuthViewProps> = ({ onAuthSuccess }) => {
                   type="button"
                   onClick={() => setShowPassword(!showPassword)}
                   className="absolute left-3 top-3 text-zinc-400 hover:text-zinc-600 dark:hover:text-zinc-200 focus:outline-none cursor-pointer"
-                  aria-label="Toggle password visibility"
+                  aria-label="تبديل إظهار كلمة المرور"
                 >
                   {showPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
                 </button>
@@ -535,7 +605,7 @@ export const AuthView: React.FC<AuthViewProps> = ({ onAuthSuccess }) => {
             <button
               type="submit"
               disabled={loading}
-              className="w-full py-2.5 px-4 rounded-xl bg-blue-600 hover:bg-blue-700 active:scale-[0.99] text-white font-medium text-sm flex items-center justify-center gap-2 shadow-md shadow-blue-600/20 disabled:opacity-60 transition-all cursor-pointer"
+              className="w-full py-2.5 px-4 rounded-xl bg-blue-600 hover:bg-blue-700 active:scale-[0.99] text-white font-semibold text-sm flex items-center justify-center gap-2 shadow-md shadow-blue-600/20 disabled:opacity-60 transition-all cursor-pointer"
               id="login-submit-btn"
             >
               {loading ? (
@@ -548,7 +618,6 @@ export const AuthView: React.FC<AuthViewProps> = ({ onAuthSuccess }) => {
               )}
             </button>
 
-            {/* REGISTER LINK UNDER LOGIN */}
             <div className="pt-3 border-t border-zinc-100 dark:border-zinc-800 text-center">
               <p className="text-xs text-zinc-600 dark:text-zinc-400">
                 ليس لديك حساب؟{' '}
@@ -571,9 +640,62 @@ export const AuthView: React.FC<AuthViewProps> = ({ onAuthSuccess }) => {
         {/* 2. SIGN UP FORM */}
         {mode === 'signup' && (
           <form onSubmit={handleSignUp} className="space-y-4">
+            {/* AVATAR UPLOAD AND CIRCULAR PREVIEW */}
+            <div className="flex flex-col items-center justify-center space-y-2 pb-1">
+              <div className="relative group cursor-pointer" onClick={() => avatarInputRef.current?.click()}>
+                <UserAvatar
+                  name={fullName || 'New User'}
+                  avatarUrl={avatarPreview}
+                  size="xl"
+                  className="border-2 border-blue-500/40 shadow-md group-hover:scale-105 transition-transform"
+                />
+                <div className="absolute inset-0 bg-black/40 rounded-full flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity">
+                  <Camera className="w-6 h-6 text-white" />
+                </div>
+                <button
+                  type="button"
+                  className="absolute bottom-0 right-0 p-1.5 rounded-full bg-blue-600 text-white shadow-md hover:bg-blue-700 cursor-pointer"
+                  title="اختر صورة شخصية"
+                >
+                  <Camera className="w-3.5 h-3.5" />
+                </button>
+              </div>
+
+              <input
+                ref={avatarInputRef}
+                type="file"
+                accept="image/*"
+                className="hidden"
+                onChange={handleAvatarFileSelect}
+              />
+
+              <div className="flex items-center gap-2 text-xs">
+                <button
+                  type="button"
+                  onClick={() => avatarInputRef.current?.click()}
+                  className="text-blue-600 dark:text-blue-400 font-medium hover:underline cursor-pointer"
+                >
+                  {avatarFile ? 'تغيير الصورة' : 'رفع صورة رمزية (اختياري)'}
+                </button>
+                {avatarFile && (
+                  <>
+                    <span className="text-zinc-400">•</span>
+                    <button
+                      type="button"
+                      onClick={handleRemoveAvatar}
+                      className="text-rose-500 hover:underline cursor-pointer"
+                    >
+                      إزالة
+                    </button>
+                  </>
+                )}
+              </div>
+            </div>
+
+            {/* FULL NAME */}
             <div className="space-y-1.5">
               <label className="text-xs font-semibold text-zinc-700 dark:text-zinc-300">
-                الاسم الكامل (Full Name)
+                الاسم الكامل (Display Name)
               </label>
               <div className="relative">
                 <input
@@ -581,7 +703,7 @@ export const AuthView: React.FC<AuthViewProps> = ({ onAuthSuccess }) => {
                   required
                   value={fullName}
                   onChange={(e) => setFullName(e.target.value)}
-                  placeholder="مثال: أحمد محمد"
+                  placeholder="مثال: عمر محمد"
                   className="w-full pl-3 pr-10 py-2.5 rounded-xl bg-zinc-50 dark:bg-zinc-800/80 border border-zinc-200 dark:border-zinc-700/80 text-sm text-zinc-900 dark:text-zinc-100 placeholder-zinc-400 focus:outline-none focus:ring-2 focus:ring-blue-500/50 transition-all"
                   id="signup-name-input"
                 />
@@ -589,6 +711,7 @@ export const AuthView: React.FC<AuthViewProps> = ({ onAuthSuccess }) => {
               </div>
             </div>
 
+            {/* EMAIL */}
             <div className="space-y-1.5">
               <label className="text-xs font-semibold text-zinc-700 dark:text-zinc-300">
                 البريد الإلكتروني (Email)
@@ -608,17 +731,43 @@ export const AuthView: React.FC<AuthViewProps> = ({ onAuthSuccess }) => {
               </div>
             </div>
 
+            {/* DEVICE NAME */}
             <div className="space-y-1.5">
               <label className="text-xs font-semibold text-zinc-700 dark:text-zinc-300">
-                كلمة المرور (Password)
+                اسم الجهاز المقترن (Device Name)
               </label>
+              <div className="relative">
+                <input
+                  type="text"
+                  value={deviceName}
+                  onChange={(e) => setDeviceName(e.target.value)}
+                  placeholder="مثل: كمبيوتر أحمد أو آيفون 15"
+                  className="w-full pl-3 pr-10 py-2.5 rounded-xl bg-zinc-50 dark:bg-zinc-800/80 border border-zinc-200 dark:border-zinc-700/80 text-sm text-zinc-900 dark:text-zinc-100 placeholder-zinc-400 focus:outline-none focus:ring-2 focus:ring-blue-500/50 transition-all"
+                  id="signup-devicename-input"
+                />
+                <Laptop className="w-4 h-4 text-zinc-400 absolute right-3 top-3 pointer-events-none" />
+              </div>
+            </div>
+
+            {/* PASSWORD WITH STRENGTH INDICATOR */}
+            <div className="space-y-1.5">
+              <div className="flex items-center justify-between">
+                <label className="text-xs font-semibold text-zinc-700 dark:text-zinc-300">
+                  كلمة المرور (Password)
+                </label>
+                {password.length > 0 && (
+                  <span className="text-[11px] font-bold text-zinc-500">
+                    القوة: <strong className="text-zinc-800 dark:text-zinc-200">{passwordStrength.label}</strong>
+                  </span>
+                )}
+              </div>
               <div className="relative">
                 <input
                   type={showPassword ? 'text' : 'password'}
                   required
                   value={password}
                   onChange={(e) => setPassword(e.target.value)}
-                  placeholder="6 أحرف على الأقل"
+                  placeholder="8 أحرف مع أرقام ورموز"
                   className="w-full pl-10 pr-10 py-2.5 rounded-xl bg-zinc-50 dark:bg-zinc-800/80 border border-zinc-200 dark:border-zinc-700/80 text-sm text-zinc-900 dark:text-zinc-100 placeholder-zinc-400 focus:outline-none focus:ring-2 focus:ring-blue-500/50 transition-all text-left"
                   dir="ltr"
                   id="signup-password-input"
@@ -633,8 +782,41 @@ export const AuthView: React.FC<AuthViewProps> = ({ onAuthSuccess }) => {
                   {showPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
                 </button>
               </div>
+
+              {/* Password Strength Meter Bar */}
+              {password.length > 0 && (
+                <div className="space-y-1.5 pt-1">
+                  <div className="grid grid-cols-4 gap-1 h-1.5">
+                    {[1, 2, 3, 4].map((step) => (
+                      <div
+                        key={step}
+                        className={`h-full rounded-full transition-all duration-300 ${
+                          passwordStrength.score >= step
+                            ? passwordStrength.color
+                            : 'bg-zinc-200 dark:bg-zinc-750'
+                        }`}
+                      />
+                    ))}
+                  </div>
+                  <div className="flex flex-wrap gap-2 text-[10px] text-zinc-500 dark:text-zinc-400 pt-0.5">
+                    <span className={passwordStrength.hasMinLength ? 'text-emerald-500 font-bold' : ''}>
+                      ✓ 8 خانات
+                    </span>
+                    <span className={(passwordStrength.hasUppercase && passwordStrength.hasLowercase) ? 'text-emerald-500 font-bold' : ''}>
+                      ✓ أحرف كبيرة وصغيرة
+                    </span>
+                    <span className={passwordStrength.hasNumber ? 'text-emerald-500 font-bold' : ''}>
+                      ✓ أرقام
+                    </span>
+                    <span className={passwordStrength.hasSpecialChar ? 'text-emerald-500 font-bold' : ''}>
+                      ✓ رمز خاص
+                    </span>
+                  </div>
+                </div>
+              )}
             </div>
 
+            {/* CONFIRM PASSWORD */}
             <div className="space-y-1.5">
               <label className="text-xs font-semibold text-zinc-700 dark:text-zinc-300">
                 تأكيد كلمة المرور (Confirm Password)
@@ -652,20 +834,23 @@ export const AuthView: React.FC<AuthViewProps> = ({ onAuthSuccess }) => {
                 />
                 <KeyRound className="w-4 h-4 text-zinc-400 absolute right-3 top-3 pointer-events-none" />
               </div>
+              {confirmPassword && password !== confirmPassword && (
+                <p className="text-[11px] text-rose-500 font-medium">كلمتا المرور غير متطابقتين</p>
+              )}
             </div>
 
             <button
               type="submit"
               disabled={loading}
-              className="w-full py-2.5 px-4 rounded-xl bg-blue-600 hover:bg-blue-700 active:scale-[0.99] text-white font-medium text-sm flex items-center justify-center gap-2 shadow-md shadow-blue-600/20 disabled:opacity-60 transition-all cursor-pointer"
+              className="w-full py-2.5 px-4 rounded-xl bg-blue-600 hover:bg-blue-700 active:scale-[0.99] text-white font-bold text-sm flex items-center justify-center gap-2 shadow-md shadow-blue-600/20 disabled:opacity-60 transition-all cursor-pointer"
               id="signup-submit-btn"
             >
               {loading ? (
                 <div className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />
               ) : (
                 <>
-                  <span>إرسال رمز التأكيد والمتابعة</span>
-                  <Send className="w-4 h-4" />
+                  <span>إنشاء الحساب وتفعيل الأمان</span>
+                  <ArrowRight className="w-4 h-4" />
                 </>
               )}
             </button>
@@ -680,89 +865,57 @@ export const AuthView: React.FC<AuthViewProps> = ({ onAuthSuccess }) => {
                     setMode('login');
                   }}
                   className="text-blue-600 dark:text-blue-400 font-bold hover:underline cursor-pointer transition-colors"
-                  id="back-to-login-btn"
+                  id="go-to-login-btn"
                 >
-                  تسجيل الدخول (Sign in)
+                  تسجيل الدخول
                 </button>
               </p>
             </div>
           </form>
         )}
 
-        {/* 3. OTP / EMAIL CONFIRMATION VERIFICATION */}
+        {/* 3. VERIFY CODE FORM */}
         {mode === 'verify' && (
-          <form onSubmit={handleVerifyCode} className="space-y-4">
-            {/* Secure Email Destination Badge */}
-            <div className="p-4 rounded-2xl bg-zinc-50 dark:bg-zinc-800/80 border border-zinc-200 dark:border-zinc-700/80 space-y-2 text-center">
-              <div className="w-10 h-10 rounded-full bg-blue-100 dark:bg-blue-900/50 text-blue-600 dark:text-blue-400 flex items-center justify-center mx-auto">
-                <Mail className="w-5 h-5" />
-              </div>
-              <div className="text-xs text-zinc-600 dark:text-zinc-300">
-                حسابك بانتظار التأكيد لعنوان البريد:
-              </div>
-              <div className="font-mono font-bold text-sm text-blue-600 dark:text-blue-400 bg-white dark:bg-zinc-900/80 py-1 px-3 rounded-lg border border-zinc-200 dark:border-zinc-800 inline-block" dir="ltr">
-                {email}
-              </div>
+          <form onSubmit={handleVerifyOtp} className="space-y-5 text-center">
+            <div className="p-3.5 rounded-xl bg-blue-50 dark:bg-blue-950/40 border border-blue-200 dark:border-blue-900/50 text-xs text-blue-700 dark:text-blue-300 leading-relaxed">
+              <span>تم إرسال رمز الأمان أو رابط التفعيل إلى: </span>
+              <strong className="font-mono text-zinc-900 dark:text-zinc-100">{email}</strong>
             </div>
 
-            {/* Supabase Link vs Code Guidance Box */}
-            <div className="p-3.5 rounded-2xl bg-blue-50/80 dark:bg-blue-950/40 border border-blue-200 dark:border-blue-900/60 space-y-1.5 text-right">
-              <div className="flex items-center gap-2 text-xs font-bold text-blue-900 dark:text-blue-300">
-                <span>📬</span>
-                <span>تنبيه هام حول رسائل التأكيد:</span>
-              </div>
-              <p className="text-[11px] text-zinc-600 dark:text-zinc-300 leading-relaxed">
-                إذا وصلتك رسالة تحتوي على <strong>رابط تأكيد (Confirmation Link)</strong>، اضغط عليه في بريدك، ثم انقر على زر <strong>"تحقق من تفعيل الرابط"</strong> أدناه.
-                <br />
-                أما إذا كان بالرسالة <strong>رمز أرقام (OTP)</strong>، فاكتبه في الخانات الستة بالأسفل.
-              </p>
-            </div>
-
-            {/* Quick OTP Helper Banner (when code is available locally) */}
+            {/* Quick Auto-fill banner if debugCode available */}
             {activeOtpCode && (
-              <div className="p-3.5 bg-emerald-50 dark:bg-emerald-950/40 border border-emerald-200 dark:border-emerald-800/80 rounded-2xl flex items-center justify-between gap-3 text-xs sm:text-sm shadow-sm">
-                <div className="text-right space-y-0.5">
-                  <span className="text-zinc-600 dark:text-zinc-300 font-medium block text-xs">
-                    رمز التحقق السريع:
-                  </span>
-                  <span className="font-mono font-bold text-xl text-emerald-600 dark:text-emerald-400 tracking-widest block" dir="ltr">
-                    {activeOtpCode}
-                  </span>
+              <div className="p-3 rounded-xl bg-emerald-50 dark:bg-emerald-950/40 border border-emerald-200 dark:border-emerald-800 text-xs text-emerald-800 dark:text-emerald-300 flex items-center justify-between">
+                <div className="flex items-center gap-2">
+                  <Sparkles className="w-4 h-4 text-emerald-600" />
+                  <span>رمز التحقق السريع: <strong className="font-mono font-bold tracking-widest text-sm">{activeOtpCode}</strong></span>
                 </div>
                 <button
                   type="button"
-                  onClick={() => {
-                    const digits = activeOtpCode.slice(0, 6).split('');
-                    setOtpDigits(digits);
-                    otpInputRefs.current[5]?.focus();
-                  }}
-                  className="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-700 active:scale-95 text-white rounded-xl text-xs font-bold transition-all shadow-sm cursor-pointer whitespace-nowrap"
-                  id="auto-fill-otp-btn"
+                  onClick={handleAutoFillCode}
+                  className="px-2.5 py-1 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg font-bold text-[11px] transition-colors cursor-pointer"
                 >
-                  تعبئة الرمز تلقائياً ⚡
+                  تعبئة تلقائياً ⚡
                 </button>
               </div>
             )}
 
-            {/* 6-Digit Segmented OTP Input */}
+            {/* 6 Digit Inputs */}
             <div className="space-y-2">
-              <label className="text-xs font-semibold text-zinc-700 dark:text-zinc-300 block text-center">
-                أدخل رمز التأكيد (OTP) المكون من 6 أرقام:
+              <label className="text-xs font-semibold text-zinc-700 dark:text-zinc-300 block">
+                أدخل رمز التأكيد المكون من 6 أرقام
               </label>
-              <div className="flex justify-center items-center gap-2 sm:gap-2.5" dir="ltr">
+              <div className="flex items-center justify-center gap-2 sm:gap-2.5" dir="ltr">
                 {otpDigits.map((digit, idx) => (
                   <input
                     key={idx}
                     ref={(el) => { otpInputRefs.current[idx] = el; }}
                     type="text"
                     inputMode="numeric"
-                    pattern="[0-9]*"
-                    maxLength={1}
+                    maxLength={6}
                     value={digit}
                     onChange={(e) => handleOtpChange(idx, e.target.value)}
                     onKeyDown={(e) => handleOtpKeyDown(idx, e)}
-                    className="w-11 h-13 sm:w-12 sm:h-14 text-center text-xl sm:text-2xl font-mono font-bold rounded-xl bg-zinc-50 dark:bg-zinc-800/90 border border-zinc-200 dark:border-zinc-700 text-zinc-900 dark:text-zinc-100 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all shadow-inner"
-                    id={`otp-digit-${idx}`}
+                    className="w-10 h-12 sm:w-12 sm:h-14 text-center text-lg sm:text-xl font-bold font-mono rounded-xl bg-zinc-50 dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-700 text-zinc-900 dark:text-zinc-100 focus:outline-none focus:ring-2 focus:ring-blue-500 transition-all"
                   />
                 ))}
               </div>
@@ -770,37 +923,31 @@ export const AuthView: React.FC<AuthViewProps> = ({ onAuthSuccess }) => {
 
             <button
               type="submit"
-              disabled={loading || otpDigits.join('').length < 6}
-              className="w-full py-2.5 px-4 rounded-xl bg-emerald-600 hover:bg-emerald-700 active:scale-[0.99] text-white font-medium text-sm flex items-center justify-center gap-2 shadow-md shadow-emerald-600/20 disabled:opacity-50 transition-all cursor-pointer"
-              id="verify-submit-btn"
+              disabled={loading}
+              className="w-full py-2.5 px-4 rounded-xl bg-blue-600 hover:bg-blue-700 active:scale-[0.99] text-white font-bold text-sm flex items-center justify-center gap-2 shadow-md shadow-blue-600/20 disabled:opacity-60 transition-all cursor-pointer"
             >
               {loading ? (
                 <div className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />
               ) : (
                 <>
-                  <CheckCircle2 className="w-4 h-4" />
-                  <span>تأكيد الحساب والدخول بالرمز</span>
+                  <span>تأكيد الرمز والدخول</span>
+                  <ArrowRight className="w-4 h-4" />
                 </>
               )}
             </button>
 
-            {/* Check Confirmation Link Button */}
+            {/* Check email confirmation link */}
             <button
               type="button"
               onClick={handleCheckConfirmationLink}
               disabled={checkingStatus}
-              className="w-full py-2 px-3 rounded-xl border border-blue-200 dark:border-blue-800/80 bg-blue-50/50 dark:bg-blue-950/30 hover:bg-blue-100 dark:hover:bg-blue-900/50 text-blue-700 dark:text-blue-300 text-xs font-medium flex items-center justify-center gap-2 transition-colors cursor-pointer disabled:opacity-50"
-              id="check-confirmation-link-btn"
+              className="w-full py-2 px-3 rounded-xl bg-zinc-100 dark:bg-zinc-800 hover:bg-zinc-200 dark:hover:bg-zinc-700 text-zinc-700 dark:text-zinc-300 text-xs font-semibold flex items-center justify-center gap-2 transition-colors cursor-pointer"
             >
-              {checkingStatus ? (
-                <div className="w-3.5 h-3.5 border-2 border-blue-600/30 border-t-blue-600 rounded-full animate-spin" />
-              ) : (
-                <RefreshCw className="w-3.5 h-3.5 text-blue-500" />
-              )}
+              <RefreshCw className={`w-3.5 h-3.5 ${checkingStatus ? 'animate-spin' : ''}`} />
               <span>تحقق من تفعيل الرابط (إذا ضغطت عليه في الإيميل) 🔄</span>
             </button>
 
-            {/* Resend Cooldown, Skip, and Back to Login */}
+            {/* Resend and Skip */}
             <div className="pt-2 border-t border-zinc-100 dark:border-zinc-800 space-y-2">
               <div className="flex items-center justify-between text-xs">
                 <button
@@ -808,7 +955,6 @@ export const AuthView: React.FC<AuthViewProps> = ({ onAuthSuccess }) => {
                   onClick={handleResend}
                   disabled={loading || resendCooldown > 0}
                   className="flex items-center gap-1.5 text-zinc-600 dark:text-zinc-400 hover:text-blue-600 dark:hover:text-blue-400 font-medium cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
-                  id="resend-code-btn"
                 >
                   <RefreshCw className={`w-3.5 h-3.5 ${loading ? 'animate-spin' : ''}`} />
                   <span>
@@ -820,8 +966,6 @@ export const AuthView: React.FC<AuthViewProps> = ({ onAuthSuccess }) => {
                   type="button"
                   onClick={handleSkipVerification}
                   className="text-amber-600 dark:text-amber-400 hover:underline font-bold cursor-pointer flex items-center gap-1 text-xs"
-                  id="skip-verification-btn"
-                  title="تخطي شاشة التأكيد والمتابعة للدخول مباشرة"
                 >
                   <span>تخطي التأكيد والدخول ⚡</span>
                 </button>
@@ -842,10 +986,11 @@ export const AuthView: React.FC<AuthViewProps> = ({ onAuthSuccess }) => {
             </div>
           </form>
         )}
+
         {/* Supabase Configuration Modal */}
         {showSupabaseModal && (
-          <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-xs">
-            <div className="w-full max-w-md bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded-2xl shadow-2xl p-6 space-y-4 text-right">
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-xs animate-in fade-in">
+            <div className="w-full max-w-md bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded-3xl shadow-2xl p-6 space-y-4 text-right">
               <div className="flex items-center justify-between border-b border-zinc-100 dark:border-zinc-800 pb-3">
                 <button
                   type="button"
@@ -863,7 +1008,7 @@ export const AuthView: React.FC<AuthViewProps> = ({ onAuthSuccess }) => {
               </div>
 
               <p className="text-xs text-zinc-500 dark:text-zinc-400 leading-relaxed">
-                اربط مشروعك على <strong>Supabase</strong> لتشغيل تسجيل الدخول السحابي الفعلي، وتأكيد البريد الإلكتروني (OTP)، وحفظ المستخدمين في لوحة تحكم Supabase الخاصة بك.
+                اربط مشروعك على <strong>Supabase</strong> لتشغيل تسجيل الدخول السحابي الفعلي، وتأكيد البريد الإلكتروني (OTP)، وحفظ المستخدمين والصور في Supabase.
               </p>
 
               {supabaseConfigError && (
@@ -907,10 +1052,6 @@ export const AuthView: React.FC<AuthViewProps> = ({ onAuthSuccess }) => {
                   />
                 </div>
 
-                <div className="p-2.5 rounded-xl bg-blue-50 dark:bg-blue-950/40 border border-blue-200 dark:border-blue-900/50 text-[11px] text-blue-700 dark:text-blue-300 leading-relaxed">
-                  💡 تجد هذه القيم في لوحة تحكم <strong>Supabase Dashboard</strong> ⬅️ <strong>Project Settings</strong> ⬅️ <strong>API</strong>.
-                </div>
-
                 <div className="flex items-center gap-2 pt-2">
                   <button
                     type="button"
@@ -929,6 +1070,67 @@ export const AuthView: React.FC<AuthViewProps> = ({ onAuthSuccess }) => {
                     </button>
                   )}
                 </div>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* SQL Migration Script Modal */}
+        {showSqlModal && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/70 backdrop-blur-xs animate-in fade-in">
+            <div className="w-full max-w-xl max-h-[85vh] flex flex-col bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded-3xl shadow-2xl p-6 text-right">
+              <div className="flex items-center justify-between border-b border-zinc-100 dark:border-zinc-800 pb-3">
+                <button
+                  type="button"
+                  onClick={() => setShowSqlModal(false)}
+                  className="p-1 rounded-lg text-zinc-400 hover:text-zinc-600 dark:hover:text-zinc-200 cursor-pointer"
+                >
+                  ✕
+                </button>
+                <div className="flex items-center gap-2">
+                  <span className="font-bold text-sm text-zinc-900 dark:text-zinc-100">
+                    كود تهيئة جداول Supabase (SQL Migration)
+                  </span>
+                  <Code2 className="w-4 h-4 text-blue-500" />
+                </div>
+              </div>
+
+              <p className="text-xs text-zinc-500 dark:text-zinc-400 mt-3 leading-relaxed">
+                انسخ هذا الكود والصقه في <strong>Supabase Dashboard ➔ SQL Editor</strong> ثم اضغط <strong>RUN</strong> لإنشاء جدول <code>profiles</code> وسلة التخزين <code>avatars</code> مع كامل سياسات الأمان والقوادح التلقائية:
+              </p>
+
+              <div className="flex-1 my-3 overflow-hidden rounded-xl border border-zinc-200 dark:border-zinc-800 bg-zinc-950 text-zinc-200 text-xs font-mono p-3 relative">
+                <pre className="h-64 overflow-y-auto text-left selection:bg-blue-600 select-all whitespace-pre-wrap" dir="ltr">
+                  {SQL_PROFILES_MIGRATION.trim()}
+                </pre>
+              </div>
+
+              <div className="flex items-center justify-between pt-2 border-t border-zinc-100 dark:border-zinc-800">
+                <button
+                  type="button"
+                  onClick={() => setShowSqlModal(false)}
+                  className="px-4 py-2 rounded-xl text-xs font-medium text-zinc-600 dark:text-zinc-400 hover:bg-zinc-100 dark:hover:bg-zinc-800 cursor-pointer"
+                >
+                  إغلاق
+                </button>
+
+                <button
+                  type="button"
+                  onClick={handleCopySql}
+                  className="px-5 py-2.5 rounded-xl bg-blue-600 hover:bg-blue-700 text-white text-xs font-bold flex items-center gap-1.5 shadow-md cursor-pointer transition-colors"
+                >
+                  {copiedSql ? (
+                    <>
+                      <Check className="w-4 h-4 text-emerald-400" />
+                      <span>تم النسخ بنجاح!</span>
+                    </>
+                  ) : (
+                    <>
+                      <Copy className="w-4 h-4" />
+                      <span>نسخ كود الـ SQL بالكامل</span>
+                    </>
+                  )}
+                </button>
               </div>
             </div>
           </div>
