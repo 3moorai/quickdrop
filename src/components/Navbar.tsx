@@ -193,7 +193,7 @@ export const Navbar: React.FC<NavbarProps> = ({
             </button>
 
             {/* Profile / Account Tab */}
-            {currentUser ? (
+            {currentUser && (
               <button
                 onClick={() => onTabChange('profile')}
                 className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md transition-all cursor-pointer ${
@@ -215,20 +215,6 @@ export const Navbar: React.FC<NavbarProps> = ({
                   <User className="w-3.5 h-3.5 text-blue-500" />
                 )}
                 <span className="max-w-[80px] sm:max-w-[110px] truncate">{currentUser.name || 'حسابي'}</span>
-              </button>
-            ) : (
-              <button
-                onClick={() => onTabChange('auth')}
-                className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md transition-all cursor-pointer ${
-                  currentTab === 'auth'
-                    ? 'bg-white dark:bg-zinc-800 text-blue-600 dark:text-blue-400 shadow-xs font-semibold'
-                    : 'text-zinc-600 dark:text-zinc-400 hover:text-zinc-900 dark:hover:text-zinc-200'
-                }`}
-                id="nav-tab-auth"
-                title="تسجيل الدخول / إنشاء حساب"
-              >
-                <User className="w-3.5 h-3.5 text-blue-500" />
-                <span>حسابي</span>
               </button>
             )}
           </nav>

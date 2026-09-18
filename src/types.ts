@@ -79,7 +79,7 @@ export interface SignalingIceCandidateMessage {
   candidate: RTCIceCandidateInit;
 }
 
-export type AppTab = 'transfer' | 'history' | 'profile' | 'privacy' | 'help' | 'auth';
+export type AppTab = 'transfer' | 'history' | 'profile' | 'privacy' | 'help';
 
 export interface UserProfile {
   id: string;
@@ -89,5 +89,5 @@ export interface UserProfile {
   deviceName?: string;
   createdAt?: string;
   emailConfirmed?: boolean;
-  provider?: 'email' | 'google' | 'guest';
+  provider?: 'email' | 'google';
 }

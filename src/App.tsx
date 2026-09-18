@@ -306,10 +306,11 @@ export default function App() {
         },
       });
 
+      signalingClientRef.current = signaling;
+
       try {
         await signaling.connect(newSession.sessionId, 'host');
         signaling.registerHost(newSession.sessionId, newSession.token, localDeviceInfo);
-        signalingClientRef.current = signaling;
       } catch {
         setConnectionState('waiting');
       }
@@ -388,10 +389,11 @@ export default function App() {
         },
       });
 
+      signalingClientRef.current = signaling;
+
       try {
         await signaling.connect(targetSessionId, 'joiner');
         signaling.joinSession(targetSessionId, targetToken, localDeviceInfo);
-        signalingClientRef.current = signaling;
       } catch {
         setConnectionState('connecting');
       }
@@ -403,6 +405,8 @@ export default function App() {
 
   // Check URL parameters for direct join or restore active session on refresh
   useEffect(() => {
+    if (!currentUser) return;
+
     const params = new URLSearchParams(window.location.search);
     const code = params.get('code');
     const joinToken = params.get('join');
@@ -447,9 +451,10 @@ export default function App() {
               onError: (err) => console.warn('Signaling message:', err),
             });
 
+            signalingClientRef.current = signaling;
+
             signaling.connect(sessionObj.sessionId, 'host').then(() => {
               signaling.registerHost(sessionObj.sessionId, sessionObj.token, localDeviceInfo);
-              signalingClientRef.current = signaling;
             });
             return;
           } else {
@@ -458,7 +463,7 @@ export default function App() {
         }
       } catch {}
     }
-  }, []);
+  }, [currentUser]);
 
   // End active session
   const handleEndSession = () => {
@@ -534,6 +539,29 @@ export default function App() {
     );
   }
 
+  // If user is not logged in, show the Login/Register/OTP Verification screen
+  if (!currentUser) {
+    return (
+      <div className="min-h-screen flex flex-col bg-zinc-50 dark:bg-zinc-950 text-zinc-900 dark:text-zinc-100 selection:bg-blue-500 selection:text-white antialiased">
+        <Navbar
+          currentTab="transfer"
+          onTabChange={() => {}}
+          connectionState="disconnected"
+          theme={theme}
+          onToggleTheme={toggleTheme}
+          hasActiveSession={false}
+          currentUser={null}
+        />
+        <main className="flex-1 flex items-center justify-center">
+          <AuthView onAuthSuccess={(user) => {
+            setCurrentUser(user);
+            setCurrentTab('transfer');
+          }} />
+        </main>
+      </div>
+    );
+  }
+
   return (
     <div className="min-h-screen flex flex-col bg-zinc-50 dark:bg-zinc-950 text-zinc-900 dark:text-zinc-100 selection:bg-blue-500 selection:text-white antialiased">
       {/* Top Navigation */}
@@ -553,30 +581,12 @@ export default function App() {
 
       {/* Main Content Area */}
       <main className="flex-1 pb-16">
-        {currentTab === 'auth' ? (
-          <AuthView
-            onAuthSuccess={(user) => {
-              setCurrentUser(user);
-              setCurrentTab('transfer');
-            }}
-            onCancel={() => setCurrentTab('transfer')}
+        {currentTab === 'profile' ? (
+          <ProfileView
+            user={currentUser}
+            onUpdateUser={setCurrentUser}
+            onLogout={handleLogout}
           />
-        ) : currentTab === 'profile' ? (
-          currentUser ? (
-            <ProfileView
-              user={currentUser}
-              onUpdateUser={setCurrentUser}
-              onLogout={handleLogout}
-            />
-          ) : (
-            <AuthView
-              onAuthSuccess={(user) => {
-                setCurrentUser(user);
-                setCurrentTab('profile');
-              }}
-              onCancel={() => setCurrentTab('transfer')}
-            />
-          )
         ) : currentTab === 'history' ? (
           <HistoryView
             files={files}

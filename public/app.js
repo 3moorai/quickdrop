@@ -158,7 +158,7 @@ var Navbar = ({
             ]
           }
         ),
-        currentUser ? /* @__PURE__ */ jsxs(
+        currentUser && /* @__PURE__ */ jsxs(
           "button",
           {
             onClick: () => onTabChange("profile"),
@@ -176,18 +176,6 @@ var Navbar = ({
                 }
               ) : /* @__PURE__ */ jsx(User, { className: "w-3.5 h-3.5 text-blue-500" }),
               /* @__PURE__ */ jsx("span", { className: "max-w-[80px] sm:max-w-[110px] truncate", children: currentUser.name || "\u062D\u0633\u0627\u0628\u064A" })
-            ]
-          }
-        ) : /* @__PURE__ */ jsxs(
-          "button",
-          {
-            onClick: () => onTabChange("auth"),
-            className: `flex items-center gap-1.5 px-3 py-1.5 rounded-md transition-all cursor-pointer ${currentTab === "auth" ? "bg-white dark:bg-zinc-800 text-blue-600 dark:text-blue-400 shadow-xs font-semibold" : "text-zinc-600 dark:text-zinc-400 hover:text-zinc-900 dark:hover:text-zinc-200"}`,
-            id: "nav-tab-auth",
-            title: "\u062A\u0633\u062C\u064A\u0644 \u0627\u0644\u062F\u062E\u0648\u0644 / \u0625\u0646\u0634\u0627\u0621 \u062D\u0633\u0627\u0628",
-            children: [
-              /* @__PURE__ */ jsx(User, { className: "w-3.5 h-3.5 text-blue-500" }),
-              /* @__PURE__ */ jsx("span", { children: "\u062D\u0633\u0627\u0628\u064A" })
             ]
           }
         )
@@ -1801,7 +1789,6 @@ async function signUpUser(email, password, fullName) {
   return {
     success: true,
     needsEmailVerification: true,
-    debugCode: code,
     user: {
       id: newUser.id,
       email: newUser.email,
@@ -1890,8 +1877,7 @@ async function resendVerificationCode(email) {
   savePendingVerifications(pending);
   await dispatchVerificationEmail(normalizedEmail, newCode);
   return {
-    success: true,
-    debugCode: newCode
+    success: true
   };
 }
 async function signInUser(email, password) {
@@ -2100,11 +2086,10 @@ async function signInWithGoogle(googleProfile) {
       }
     });
   }
-  return signInWithGoogle({
-    email: "omarmhmdfwzi22@gmail.com",
-    name: "3moorai (Omar)",
-    avatarUrl: "https://avatars.githubusercontent.com/u/261945195?v=4"
-  });
+  return {
+    success: false,
+    error: "\u0644\u062A\u0633\u062C\u064A\u0644 \u0627\u0644\u062F\u062E\u0648\u0644 \u0627\u0644\u0641\u0639\u0644\u064A \u0628\u0640 Google\u060C \u064A\u0631\u062C\u0649 \u062A\u0632\u0648\u064A\u062F \u0627\u0644\u062A\u0637\u0628\u064A\u0642 \u0628\u0640 VITE_GOOGLE_CLIENT_ID \u0641\u064A \u0625\u0639\u062F\u0627\u062F\u0627\u062A \u0627\u0644\u0628\u064A\u0626\u0629 (Settings > Secrets) \u0623\u0648 \u0631\u0628\u0637 Supabase."
+  };
 }
 async function signOutUser() {
   const supabase = getSupabaseClient();
@@ -2185,17 +2170,13 @@ async function updateUserProfile(updates) {
 
 // src/components/AuthView.tsx
 import { Fragment as Fragment6, jsx as jsx10, jsxs as jsxs10 } from "react/jsx-runtime";
-var AuthView = ({ onAuthSuccess, onCancel }) => {
+var AuthView = ({ onAuthSuccess }) => {
   const [mode, setMode] = useState5("login");
   const [email, setEmail] = useState5("");
   const [password, setPassword] = useState5("");
   const [confirmPassword, setConfirmPassword] = useState5("");
   const [fullName, setFullName] = useState5("");
-  const [showGooglePicker, setShowGooglePicker] = useState5(false);
-  const [customGoogleEmail, setCustomGoogleEmail] = useState5("");
-  const [customGoogleName, setCustomGoogleName] = useState5("");
   const [otpDigits, setOtpDigits] = useState5(["", "", "", "", "", ""]);
-  const [activeOtpCode, setActiveOtpCode] = useState5(null);
   const otpInputRefs = useRef4([]);
   const [resendCooldown, setResendCooldown] = useState5(0);
   const [showPassword, setShowPassword] = useState5(false);
@@ -2262,10 +2243,7 @@ var AuthView = ({ onAuthSuccess, onCancel }) => {
           setOtpDigits(["", "", "", "", "", ""]);
           setResendCooldown(60);
           setMode("verify");
-          if (res.debugCode) {
-            setActiveOtpCode(res.debugCode);
-          }
-          setSuccessMessage("\u062A\u0645 \u0625\u0646\u0634\u0627\u0621 \u062D\u0633\u0627\u0628\u0643 \u0628\u0646\u062C\u0627\u062D! \u062A\u0641\u0642\u062F \u0631\u0645\u0632 \u0627\u0644\u062A\u062D\u0642\u0642 \u0623\u062F\u0646\u0627\u0647 \u0644\u062A\u0623\u0643\u064A\u062F\u0647.");
+          setSuccessMessage("\u062A\u0645 \u0625\u0631\u0633\u0627\u0644 \u0631\u0645\u0632 \u0627\u0644\u062A\u0623\u0643\u064A\u062F \u0627\u0644\u0633\u0631\u064A \u062D\u0635\u0631\u064A\u0627\u064B \u0625\u0644\u0649 \u0628\u0631\u064A\u062F\u0643 \u0627\u0644\u0625\u0644\u0643\u062A\u0631\u0648\u0646\u064A!");
         } else if (res.user) {
           onAuthSuccess(res.user);
         }
@@ -2342,10 +2320,7 @@ var AuthView = ({ onAuthSuccess, onCancel }) => {
       const res = await resendVerificationCode(email);
       if (res.success) {
         setResendCooldown(60);
-        if (res.debugCode) {
-          setActiveOtpCode(res.debugCode);
-        }
-        setSuccessMessage("\u062A\u0645 \u0625\u0646\u0634\u0627\u0621 \u0631\u0645\u0632 \u062A\u0623\u0643\u064A\u062F \u062C\u062F\u064A\u062F! \u064A\u0645\u0643\u0646\u0643 \u0627\u0633\u062A\u062E\u062F\u0627\u0645\u0647 \u0623\u062F\u0646\u0627\u0647.");
+        setSuccessMessage("\u062A\u0645 \u0625\u0631\u0633\u0627\u0644 \u0631\u0645\u0632 \u062A\u0623\u0643\u064A\u062F \u062C\u062F\u064A\u062F \u0625\u0644\u0649 \u0628\u0631\u064A\u062F\u0643 \u0627\u0644\u0625\u0644\u0643\u062A\u0631\u0648\u0646\u064A. \u062A\u0641\u0642\u062F \u0635\u0646\u062F\u0648\u0642 \u0627\u0644\u0648\u0627\u0631\u062F.");
       } else {
         setErrorMessage(res.error || "\u062A\u0639\u0630\u0631 \u0625\u0639\u0627\u062F\u0629 \u0625\u0631\u0633\u0627\u0644 \u0627\u0644\u0631\u0645\u0632");
       }
@@ -2355,45 +2330,21 @@ var AuthView = ({ onAuthSuccess, onCancel }) => {
       setLoading(false);
     }
   };
-  const handleGoogleAuthClick = () => {
-    clearMessages();
-    if (email.trim()) {
-      setCustomGoogleEmail(email.trim());
-      setCustomGoogleName(fullName.trim() || email.trim().split("@")[0]);
-    }
-    setShowGooglePicker(true);
-  };
-  const handleSelectGoogleAccount = async (acctEmail, acctName) => {
-    setShowGooglePicker(false);
+  const handleGoogleAuthClick = async () => {
     clearMessages();
     setLoading(true);
     try {
-      const res = await signInWithGoogle({
-        email: acctEmail.trim().toLowerCase(),
-        name: acctName.trim() || acctEmail.split("@")[0],
-        avatarUrl: `https://api.dicebear.com/7.x/bottts/svg?seed=${encodeURIComponent(acctEmail)}`
-      });
+      const res = await signInWithGoogle();
       if (res.success && res.user) {
         onAuthSuccess(res.user);
-      } else {
-        setErrorMessage(res.error || "\u0641\u0634\u0644 \u062A\u0633\u062C\u064A\u0644 \u0627\u0644\u062F\u062E\u0648\u0644 \u0639\u0628\u0631 Google");
+      } else if (res.error) {
+        setErrorMessage(res.error);
       }
     } catch (err) {
       setErrorMessage(err.message || "\u0641\u0634\u0644 \u062A\u0633\u062C\u064A\u0644 \u0627\u0644\u062F\u062E\u0648\u0644 \u0639\u0628\u0631 Google");
     } finally {
       setLoading(false);
     }
-  };
-  const handleGuestLogin = () => {
-    const guestUser = {
-      id: "guest_" + Math.random().toString(36).substring(2, 9),
-      name: "\u0645\u0633\u062A\u062E\u062F\u0645 \u0636\u064A\u0641",
-      email: "guest@quickdrop.local",
-      provider: "guest",
-      createdAt: (/* @__PURE__ */ new Date()).toISOString(),
-      emailConfirmed: true
-    };
-    onAuthSuccess(guestUser);
   };
   return /* @__PURE__ */ jsx10("div", { className: "min-h-[calc(100vh-5rem)] flex items-center justify-center px-4 py-12", children: /* @__PURE__ */ jsxs10("div", { className: "w-full max-w-md bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded-3xl shadow-xl overflow-hidden p-6 sm:p-8 space-y-6", children: [
     /* @__PURE__ */ jsxs10("div", { className: "text-center space-y-2", children: [
@@ -2514,34 +2465,23 @@ var AuthView = ({ onAuthSuccess, onCancel }) => {
           ] })
         }
       ),
-      /* @__PURE__ */ jsxs10("div", { className: "pt-3 border-t border-zinc-100 dark:border-zinc-800 text-center space-y-2", children: [
-        /* @__PURE__ */ jsxs10("p", { className: "text-xs text-zinc-600 dark:text-zinc-400", children: [
-          "\u0644\u064A\u0633 \u0644\u062F\u064A\u0643 \u062D\u0633\u0627\u0628\u061F",
-          " ",
-          /* @__PURE__ */ jsx10(
-            "button",
-            {
-              type: "button",
-              onClick: () => {
-                clearMessages();
-                setMode("signup");
-              },
-              className: "text-blue-600 dark:text-blue-400 font-bold hover:underline cursor-pointer transition-colors",
-              id: "go-to-signup-btn",
-              children: "\u0625\u0646\u0634\u0627\u0621 \u062D\u0633\u0627\u0628 \u062C\u062F\u064A\u062F (Register)"
-            }
-          )
-        ] }),
-        /* @__PURE__ */ jsx10("div", { children: /* @__PURE__ */ jsx10(
+      /* @__PURE__ */ jsx10("div", { className: "pt-3 border-t border-zinc-100 dark:border-zinc-800 text-center", children: /* @__PURE__ */ jsxs10("p", { className: "text-xs text-zinc-600 dark:text-zinc-400", children: [
+        "\u0644\u064A\u0633 \u0644\u062F\u064A\u0643 \u062D\u0633\u0627\u0628\u061F",
+        " ",
+        /* @__PURE__ */ jsx10(
           "button",
           {
             type: "button",
-            onClick: handleGuestLogin,
-            className: "text-xs text-zinc-500 dark:text-zinc-400 hover:text-blue-600 dark:hover:text-blue-400 font-medium hover:underline cursor-pointer",
-            children: "\u0627\u0644\u0645\u062A\u0627\u0628\u0639\u0629 \u0643\u0636\u064A\u0641 \u0648\u0627\u0633\u062A\u062E\u062F\u0627\u0645 \u0627\u0644\u0645\u0648\u0642\u0639 \u0641\u0648\u0631\u0627\u064B \u0628\u062F\u0648\u0646 \u062A\u0633\u062C\u064A\u0644 \u{1F680}"
+            onClick: () => {
+              clearMessages();
+              setMode("signup");
+            },
+            className: "text-blue-600 dark:text-blue-400 font-bold hover:underline cursor-pointer transition-colors",
+            id: "go-to-signup-btn",
+            children: "\u0625\u0646\u0634\u0627\u0621 \u062D\u0633\u0627\u0628 \u062C\u062F\u064A\u062F (Register)"
           }
-        ) })
-      ] })
+        )
+      ] }) })
     ] }),
     mode === "signup" && /* @__PURE__ */ jsxs10("form", { onSubmit: handleSignUp, className: "space-y-4", children: [
       /* @__PURE__ */ jsxs10("div", { className: "space-y-1.5", children: [
@@ -2670,26 +2610,6 @@ var AuthView = ({ onAuthSuccess, onCancel }) => {
           /* @__PURE__ */ jsx10("span", { children: "\u0627\u0644\u0631\u0645\u0632 \u0633\u0631\u064A \u0648\u0645\u062D\u0645\u064A\u061B \u062A\u0641\u0642\u062F \u0635\u0646\u062F\u0648\u0642 \u0627\u0644\u0628\u0631\u064A\u062F \u0627\u0644\u0648\u0627\u0631\u062F \u0627\u0644\u062E\u0627\u0635 \u0628\u0643" })
         ] })
       ] }),
-      activeOtpCode && /* @__PURE__ */ jsxs10("div", { className: "p-3 bg-emerald-50 dark:bg-emerald-950/40 border border-emerald-200 dark:border-emerald-800/80 rounded-2xl flex items-center justify-between gap-3 text-xs sm:text-sm shadow-sm", children: [
-        /* @__PURE__ */ jsxs10("div", { className: "text-right space-y-0.5", children: [
-          /* @__PURE__ */ jsx10("span", { className: "text-zinc-600 dark:text-zinc-300 font-medium block", children: "\u0631\u0645\u0632 \u0627\u0644\u062A\u062D\u0642\u0642:" }),
-          /* @__PURE__ */ jsx10("span", { className: "font-mono font-bold text-lg text-emerald-600 dark:text-emerald-400 tracking-widest block", dir: "ltr", children: activeOtpCode })
-        ] }),
-        /* @__PURE__ */ jsx10(
-          "button",
-          {
-            type: "button",
-            onClick: () => {
-              const digits = activeOtpCode.slice(0, 6).split("");
-              setOtpDigits(digits);
-              otpInputRefs.current[5]?.focus();
-            },
-            className: "px-3.5 py-1.5 bg-emerald-600 hover:bg-emerald-700 active:scale-95 text-white rounded-xl text-xs font-bold transition-all shadow-sm cursor-pointer whitespace-nowrap",
-            id: "auto-fill-otp-btn",
-            children: "\u062A\u0639\u0628\u0626\u0629 \u0627\u0644\u0631\u0645\u0632 \u062A\u0644\u0642\u0627\u0626\u064A\u0627\u064B \u26A1"
-          }
-        )
-      ] }),
       /* @__PURE__ */ jsxs10("div", { className: "space-y-2", children: [
         /* @__PURE__ */ jsx10("label", { className: "text-xs font-semibold text-zinc-700 dark:text-zinc-300 block text-center", children: "\u0623\u062F\u062E\u0644 \u0631\u0645\u0632 \u0627\u0644\u062A\u0623\u0643\u064A\u062F (OTP)" }),
         /* @__PURE__ */ jsx10("div", { className: "flex justify-center items-center gap-2 sm:gap-2.5", dir: "ltr", children: otpDigits.map((digit, idx) => /* @__PURE__ */ jsx10(
@@ -2752,95 +2672,7 @@ var AuthView = ({ onAuthSuccess, onCancel }) => {
           }
         )
       ] })
-    ] }),
-    showGooglePicker && /* @__PURE__ */ jsx10("div", { className: "fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-xs", children: /* @__PURE__ */ jsxs10("div", { className: "w-full max-w-sm bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded-2xl shadow-2xl p-6 space-y-4 text-right", children: [
-      /* @__PURE__ */ jsxs10("div", { className: "flex items-center justify-between border-b border-zinc-100 dark:border-zinc-800 pb-3", children: [
-        /* @__PURE__ */ jsx10(
-          "button",
-          {
-            type: "button",
-            onClick: () => setShowGooglePicker(false),
-            className: "p-1 rounded-lg text-zinc-400 hover:text-zinc-600 dark:hover:text-zinc-200",
-            children: "\u2715"
-          }
-        ),
-        /* @__PURE__ */ jsxs10("div", { className: "flex items-center gap-2", children: [
-          /* @__PURE__ */ jsx10("span", { className: "font-bold text-sm text-zinc-900 dark:text-zinc-100", children: "\u0627\u062E\u062A\u0631 \u062D\u0633\u0627\u0628 Google" }),
-          /* @__PURE__ */ jsxs10("svg", { className: "w-5 h-5 shrink-0", viewBox: "0 0 24 24", children: [
-            /* @__PURE__ */ jsx10("path", { fill: "#4285F4", d: "M23.745 12.27c0-.7-.06-1.4-.19-2.07H12v4.51h6.6c-.29 1.52-1.14 2.82-2.4 3.68v3.05h3.88c2.27-2.09 3.66-5.17 3.66-9.17z" }),
-            /* @__PURE__ */ jsx10("path", { fill: "#34A853", d: "M12 24c3.24 0 5.95-1.08 7.93-2.91l-3.88-3.05c-1.08.72-2.45 1.16-4.05 1.16-3.12 0-5.77-2.1-6.72-4.93H1.25v3.15C3.26 21.36 7.33 24 12 24z" }),
-            /* @__PURE__ */ jsx10("path", { fill: "#FBBC05", d: "M5.28 14.27c-.25-.72-.38-1.49-.38-2.27s.13-1.55.38-2.27V6.58H1.25C.45 8.18 0 9.99 0 12s.45 3.82 1.25 5.42l4.03-3.15z" }),
-            /* @__PURE__ */ jsx10("path", { fill: "#EA4335", d: "M12 4.75c1.77 0 3.35.61 4.6 1.8l3.42-3.42C17.95 1.19 15.24 0 12 0 7.33 0 3.26 2.64 1.25 6.58l4.03 3.15c.95-2.83 3.6-4.98 6.72-4.98z" })
-          ] })
-        ] })
-      ] }),
-      /* @__PURE__ */ jsxs10("div", { className: "space-y-2", children: [
-        /* @__PURE__ */ jsxs10(
-          "button",
-          {
-            type: "button",
-            onClick: () => handleSelectGoogleAccount("3moorai@gmail.com", "Omar (3moorai)"),
-            className: "w-full p-2.5 rounded-xl border border-zinc-200 dark:border-zinc-800 hover:bg-zinc-50 dark:hover:bg-zinc-800/80 flex items-center justify-between text-right transition-all cursor-pointer",
-            children: [
-              /* @__PURE__ */ jsx10("div", { className: "w-8 h-8 rounded-full bg-blue-600 text-white flex items-center justify-center font-bold text-xs", children: "3" }),
-              /* @__PURE__ */ jsxs10("div", { className: "mr-3 flex-1 text-right", children: [
-                /* @__PURE__ */ jsx10("div", { className: "text-xs font-bold text-zinc-900 dark:text-zinc-100", children: "Omar (3moorai)" }),
-                /* @__PURE__ */ jsx10("div", { className: "text-[11px] text-zinc-400", dir: "ltr", children: "3moorai@gmail.com" })
-              ] })
-            ]
-          }
-        ),
-        /* @__PURE__ */ jsxs10(
-          "button",
-          {
-            type: "button",
-            onClick: () => handleSelectGoogleAccount("mobile.device@gmail.com", "\u0645\u0633\u062A\u062E\u062F\u0645 \u0627\u0644\u0645\u0648\u0628\u0627\u064A\u0644 (Phone)"),
-            className: "w-full p-2.5 rounded-xl border border-zinc-200 dark:border-zinc-800 hover:bg-zinc-50 dark:hover:bg-zinc-800/80 flex items-center justify-between text-right transition-all cursor-pointer",
-            children: [
-              /* @__PURE__ */ jsx10("div", { className: "w-8 h-8 rounded-full bg-emerald-600 text-white flex items-center justify-center font-bold text-xs", children: "\u{1F4F1}" }),
-              /* @__PURE__ */ jsxs10("div", { className: "mr-3 flex-1 text-right", children: [
-                /* @__PURE__ */ jsx10("div", { className: "text-xs font-bold text-zinc-900 dark:text-zinc-100", children: "\u0645\u0633\u062A\u062E\u062F\u0645 \u0627\u0644\u0645\u0648\u0628\u0627\u064A\u0644 (Phone)" }),
-                /* @__PURE__ */ jsx10("div", { className: "text-[11px] text-zinc-400", dir: "ltr", children: "mobile.device@gmail.com" })
-              ] })
-            ]
-          }
-        )
-      ] }),
-      /* @__PURE__ */ jsxs10("div", { className: "pt-2 border-t border-zinc-100 dark:border-zinc-800 space-y-2", children: [
-        /* @__PURE__ */ jsx10("div", { className: "text-xs font-semibold text-zinc-600 dark:text-zinc-400", children: "\u0623\u0648 \u0627\u0643\u062A\u0628 \u0623\u064A \u0628\u0631\u064A\u062F Google \u0622\u062E\u0631:" }),
-        /* @__PURE__ */ jsx10(
-          "input",
-          {
-            type: "text",
-            placeholder: "\u0627\u0633\u0645\u0643",
-            value: customGoogleName,
-            onChange: (e) => setCustomGoogleName(e.target.value),
-            className: "w-full px-3 py-1.5 rounded-lg border border-zinc-200 dark:border-zinc-700 bg-zinc-50 dark:bg-zinc-800 text-xs text-zinc-900 dark:text-zinc-100"
-          }
-        ),
-        /* @__PURE__ */ jsx10(
-          "input",
-          {
-            type: "email",
-            placeholder: "name@gmail.com",
-            value: customGoogleEmail,
-            onChange: (e) => setCustomGoogleEmail(e.target.value),
-            className: "w-full px-3 py-1.5 rounded-lg border border-zinc-200 dark:border-zinc-700 bg-zinc-50 dark:bg-zinc-800 text-xs text-zinc-900 dark:text-zinc-100 text-left",
-            dir: "ltr"
-          }
-        ),
-        /* @__PURE__ */ jsx10(
-          "button",
-          {
-            type: "button",
-            disabled: !customGoogleEmail.trim(),
-            onClick: () => handleSelectGoogleAccount(customGoogleEmail, customGoogleName || customGoogleEmail.split("@")[0]),
-            className: "w-full py-2 bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white rounded-lg text-xs font-bold cursor-pointer",
-            children: "\u0627\u0644\u062F\u062E\u0648\u0644 \u0628\u0647\u0630\u0627 \u0627\u0644\u062D\u0633\u0627\u0628"
-          }
-        )
-      ] })
-    ] }) })
+    ] })
   ] }) });
 };
 
@@ -4067,10 +3899,10 @@ function App() {
           console.warn("Signaling message:", err);
         }
       });
+      signalingClientRef.current = signaling;
       try {
         await signaling.connect(newSession.sessionId, "host");
         signaling.registerHost(newSession.sessionId, newSession.token, localDeviceInfo);
-        signalingClientRef.current = signaling;
       } catch {
         setConnectionState("waiting");
       }
@@ -4138,10 +3970,10 @@ function App() {
           console.warn("Signaling message:", err);
         }
       });
+      signalingClientRef.current = signaling;
       try {
         await signaling.connect(targetSessionId, "joiner");
         signaling.joinSession(targetSessionId, targetToken, localDeviceInfo);
-        signalingClientRef.current = signaling;
       } catch {
         setConnectionState("connecting");
       }
@@ -4151,6 +3983,7 @@ function App() {
     }
   };
   useEffect5(() => {
+    if (!currentUser) return;
     const params = new URLSearchParams(window.location.search);
     const code = params.get("code");
     const joinToken = params.get("join");
@@ -4194,9 +4027,9 @@ function App() {
               onSessionExpired: () => handleEndSession(),
               onError: (err) => console.warn("Signaling message:", err)
             });
+            signalingClientRef.current = signaling;
             signaling.connect(sessionObj.sessionId, "host").then(() => {
               signaling.registerHost(sessionObj.sessionId, sessionObj.token, localDeviceInfo);
-              signalingClientRef.current = signaling;
             });
             return;
           } else {
@@ -4206,7 +4039,7 @@ function App() {
       } catch {
       }
     }
-  }, []);
+  }, [currentUser]);
   const handleEndSession = () => {
     try {
       sessionStorage.removeItem("quickdrop_active_host_session");
@@ -4257,6 +4090,27 @@ function App() {
   if (isAuthLoading) {
     return /* @__PURE__ */ jsx12("div", { className: "min-h-screen flex items-center justify-center bg-zinc-50 dark:bg-zinc-950", children: /* @__PURE__ */ jsx12("div", { className: "w-8 h-8 border-3 border-blue-600/30 border-t-blue-600 rounded-full animate-spin" }) });
   }
+  if (!currentUser) {
+    return /* @__PURE__ */ jsxs12("div", { className: "min-h-screen flex flex-col bg-zinc-50 dark:bg-zinc-950 text-zinc-900 dark:text-zinc-100 selection:bg-blue-500 selection:text-white antialiased", children: [
+      /* @__PURE__ */ jsx12(
+        Navbar,
+        {
+          currentTab: "transfer",
+          onTabChange: () => {
+          },
+          connectionState: "disconnected",
+          theme,
+          onToggleTheme: toggleTheme,
+          hasActiveSession: false,
+          currentUser: null
+        }
+      ),
+      /* @__PURE__ */ jsx12("main", { className: "flex-1 flex items-center justify-center", children: /* @__PURE__ */ jsx12(AuthView, { onAuthSuccess: (user) => {
+        setCurrentUser(user);
+        setCurrentTab("transfer");
+      } }) })
+    ] });
+  }
   return /* @__PURE__ */ jsxs12("div", { className: "min-h-screen flex flex-col bg-zinc-50 dark:bg-zinc-950 text-zinc-900 dark:text-zinc-100 selection:bg-blue-500 selection:text-white antialiased", children: [
     /* @__PURE__ */ jsx12(
       Navbar,
@@ -4274,30 +4128,12 @@ function App() {
         onLogout: handleLogout
       }
     ),
-    /* @__PURE__ */ jsx12("main", { className: "flex-1 pb-16", children: currentTab === "auth" ? /* @__PURE__ */ jsx12(
-      AuthView,
-      {
-        onAuthSuccess: (user) => {
-          setCurrentUser(user);
-          setCurrentTab("transfer");
-        },
-        onCancel: () => setCurrentTab("transfer")
-      }
-    ) : currentTab === "profile" ? currentUser ? /* @__PURE__ */ jsx12(
+    /* @__PURE__ */ jsx12("main", { className: "flex-1 pb-16", children: currentTab === "profile" ? /* @__PURE__ */ jsx12(
       ProfileView,
       {
         user: currentUser,
         onUpdateUser: setCurrentUser,
         onLogout: handleLogout
-      }
-    ) : /* @__PURE__ */ jsx12(
-      AuthView,
-      {
-        onAuthSuccess: (user) => {
-          setCurrentUser(user);
-          setCurrentTab("profile");
-        },
-        onCancel: () => setCurrentTab("transfer")
       }
     ) : currentTab === "history" ? /* @__PURE__ */ jsx12(
       HistoryView,
