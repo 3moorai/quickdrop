@@ -166,6 +166,7 @@ export interface AuthResponse {
   error?: string;
   user?: UserProfile;
   needsEmailVerification?: boolean;
+  debugCode?: string;
 }
 
 /**
@@ -196,17 +197,29 @@ export async function signUpUser(
         return { success: false, error: error.message };
       }
 
-      if (data.user && !data.user.email_confirmed_at) {
+      // 1. Check if user already exists in Supabase (identities array is empty in Supabase)
+      if (data.user?.identities && data.user.identities.length === 0) {
         return {
-          success: true,
-          needsEmailVerification: true,
-          user: mapSupabaseUser(data.user),
+          success: false,
+          error: 'هذا البريد الإلكتروني مسجل بالفعل في Supabase. يرجى تسجيل الدخول بدلاً من إنشاء حساب جديد.',
         };
       }
 
+      // 2. If Confirm email is DISABLED in Supabase, data.session is returned immediately!
+      // Or if email is already marked confirmed:
+      if (data.session || data.user?.email_confirmed_at || (data.user as any)?.confirmed_at) {
+        return {
+          success: true,
+          needsEmailVerification: false,
+          user: mapSupabaseUser(data.user!),
+        };
+      }
+
+      // 3. If Confirm email is ENABLED in Supabase, user needs verification:
       if (data.user) {
         return {
           success: true,
+          needsEmailVerification: true,
           user: mapSupabaseUser(data.user),
         };
       }
@@ -257,6 +270,7 @@ export async function signUpUser(
   return {
     success: true,
     needsEmailVerification: true,
+    debugCode: code,
     user: {
       id: newUser.id,
       email: newUser.email,
@@ -282,17 +296,31 @@ export async function verifyEmailCode(
   const supabase = getSupabaseClient();
   if (supabase) {
     try {
-      const { data, error } = await supabase.auth.verifyOtp({
+      // 1. Try 'signup' OTP
+      let { data, error } = await supabase.auth.verifyOtp({
         email: normalizedEmail,
         token: cleanCode,
         type: 'signup',
       });
 
+      // 2. Fallback to 'email' OTP type if signup failed (some templates use email OTP)
       if (error) {
-        return { success: false, error: error.message };
+        const retry = await supabase.auth.verifyOtp({
+          email: normalizedEmail,
+          token: cleanCode,
+          type: 'email',
+        });
+        if (!retry.error) {
+          data = retry.data;
+          error = null;
+        }
       }
 
-      if (data.user) {
+      if (error) {
+        return { success: false, error: error.message || 'رمز التأكيد غير صحيح أو انتهت صلاحيته' };
+      }
+
+      if (data?.user) {
         const profile = mapSupabaseUser(data.user);
         return { success: true, user: profile };
       }
@@ -379,6 +407,79 @@ export async function resendVerificationCode(email: string): Promise<AuthRespons
 
   return {
     success: true,
+    debugCode: newCode,
+  };
+}
+
+export function getPendingVerificationCode(email: string): string | null {
+  const pending = getPendingVerifications();
+  const entry = pending.find((p) => p.email === email.trim().toLowerCase());
+  return entry?.code || null;
+}
+
+/**
+ * Check if a user's email was already confirmed (e.g. by clicking confirmation link in email)
+ */
+export async function checkEmailConfirmationStatus(email: string, password?: string): Promise<AuthResponse> {
+  const normalizedEmail = email.trim().toLowerCase();
+  const supabase = getSupabaseClient();
+  if (supabase) {
+    try {
+      // 1. Check current session first (if user clicked link and came back)
+      const { data: sessionData } = await supabase.auth.getSession();
+      if (sessionData.session?.user && sessionData.session.user.email?.toLowerCase() === normalizedEmail) {
+        return {
+          success: true,
+          user: mapSupabaseUser(sessionData.session.user),
+        };
+      }
+
+      // 2. If password provided, attempt sign in to verify confirmation status
+      if (password) {
+        const { data: signinData, error: signinError } = await supabase.auth.signInWithPassword({
+          email: normalizedEmail,
+          password,
+        });
+
+        if (!signinError && signinData.user) {
+          return {
+            success: true,
+            user: mapSupabaseUser(signinData.user),
+          };
+        }
+
+        if (signinError?.message?.toLowerCase().includes('email not confirmed')) {
+          return {
+            success: false,
+            error: 'لم يتم تأكيد الحساب بعد من Supabase. يرجى الضغط على الرابط في بريدك أو إدخال رمز التحقق.',
+          };
+        }
+      }
+    } catch (err: any) {
+      return { success: false, error: err.message || 'فحص حالة التأكيد غير متاح حالياً' };
+    }
+  }
+
+  // Local fallback
+  const users = getStoredUsers();
+  const user = users.find((u) => u.email === normalizedEmail);
+  if (user && user.emailConfirmed) {
+    const profile: UserProfile = {
+      id: user.id,
+      email: user.email,
+      name: user.name,
+      avatarUrl: user.avatarUrl,
+      deviceName: user.deviceName,
+      createdAt: user.createdAt,
+      emailConfirmed: true,
+    };
+    localStorage.setItem(STORAGE_CURRENT_USER, JSON.stringify(profile));
+    return { success: true, user: profile };
+  }
+
+  return {
+    success: false,
+    error: 'لم يتم تأكيد الحساب بعد.',
   };
 }
 

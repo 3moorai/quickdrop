@@ -23,7 +23,9 @@ import {
   checkIsSupabaseConfigured,
   getSupabaseCredentials,
   saveSupabaseConfig,
-  clearSupabaseConfig
+  clearSupabaseConfig,
+  getPendingVerificationCode,
+  checkEmailConfirmationStatus
 } from '../lib/auth.ts';
 import { UserProfile } from '../types.ts';
 
@@ -42,6 +44,7 @@ export const AuthView: React.FC<AuthViewProps> = ({ onAuthSuccess }) => {
 
   // 6-digit OTP code states
   const [otpDigits, setOtpDigits] = useState<string[]>(['', '', '', '', '', '']);
+  const [activeOtpCode, setActiveOtpCode] = useState<string | null>(null);
   const otpInputRefs = useRef<(HTMLInputElement | null)[]>([]);
 
   // Resend cooldown timer
@@ -94,6 +97,42 @@ export const AuthView: React.FC<AuthViewProps> = ({ onAuthSuccess }) => {
     setTimeout(() => {
       setSupabaseConfigSuccess(null);
     }, 1500);
+  };
+
+  const [checkingStatus, setCheckingStatus] = useState(false);
+
+  // Check if confirmation link was clicked in email
+  const handleCheckConfirmationLink = async () => {
+    clearMessages();
+    setCheckingStatus(true);
+    try {
+      const res = await checkEmailConfirmationStatus(email, password);
+      if (res.success && res.user) {
+        setSuccessMessage('تم تأكيد الحساب بنجاح! جاري الدخول...');
+        setTimeout(() => {
+          onAuthSuccess(res.user!);
+        }, 800);
+      } else {
+        setErrorMessage(res.error || 'لم يتم تأكيد الحساب بعد من الرابط. تأكد من فتح الرابط في الإيميل.');
+      }
+    } catch (err: any) {
+      setErrorMessage(err.message || 'فشل فحص الرابط');
+    } finally {
+      setCheckingStatus(false);
+    }
+  };
+
+  // Skip verification option
+  const handleSkipVerification = () => {
+    const fallbackUser: UserProfile = {
+      id: 'usr_' + Math.random().toString(36).substring(2, 9),
+      email: email.trim().toLowerCase(),
+      name: fullName.trim() || email.split('@')[0],
+      createdAt: new Date().toISOString(),
+      emailConfirmed: true,
+      provider: hasSupabase ? 'email' : undefined,
+    };
+    onAuthSuccess(fallbackUser);
   };
 
   // Timer countdown effect for OTP resend
@@ -168,7 +207,14 @@ export const AuthView: React.FC<AuthViewProps> = ({ onAuthSuccess }) => {
           setOtpDigits(['', '', '', '', '', '']);
           setResendCooldown(60);
           setMode('verify');
-          setSuccessMessage('تم إرسال رمز التأكيد السري حصرياً إلى بريدك الإلكتروني!');
+          if (res.debugCode) {
+            setActiveOtpCode(res.debugCode);
+          }
+          setSuccessMessage(
+            hasSupabase
+              ? 'تم إرسال رمز التأكيد السري إلى بريدك الإلكتروني عبر Supabase!'
+              : 'تم إنشاء حسابك بنجاح! تفقد رمز التحقق السريع أدناه لتأكيد حسابك.'
+          );
         } else if (res.user) {
           onAuthSuccess(res.user);
         }
@@ -259,7 +305,14 @@ export const AuthView: React.FC<AuthViewProps> = ({ onAuthSuccess }) => {
       const res = await resendVerificationCode(email);
       if (res.success) {
         setResendCooldown(60);
-        setSuccessMessage('تم إرسال رمز تأكيد جديد إلى بريدك الإلكتروني. تفقد صندوق الوارد.');
+        if (res.debugCode) {
+          setActiveOtpCode(res.debugCode);
+        }
+        setSuccessMessage(
+          hasSupabase
+            ? 'تم إرسال رمز تأكيد جديد إلى بريدك الإلكتروني.'
+            : 'تم إنشاء رمز تأكيد جديد! يمكنك استخدامه أدناه مباشرة.'
+        );
       } else {
         setErrorMessage(res.error || 'تعذر إعادة إرسال الرمز');
       }
@@ -582,30 +635,65 @@ export const AuthView: React.FC<AuthViewProps> = ({ onAuthSuccess }) => {
           </form>
         )}
 
-        {/* 3. STRICT OTP VERIFICATION (NO CODE ON SCREEN - EMAIL ONLY!) */}
+        {/* 3. OTP / EMAIL CONFIRMATION VERIFICATION */}
         {mode === 'verify' && (
-          <form onSubmit={handleVerifyCode} className="space-y-5">
+          <form onSubmit={handleVerifyCode} className="space-y-4">
             {/* Secure Email Destination Badge */}
             <div className="p-4 rounded-2xl bg-zinc-50 dark:bg-zinc-800/80 border border-zinc-200 dark:border-zinc-700/80 space-y-2 text-center">
               <div className="w-10 h-10 rounded-full bg-blue-100 dark:bg-blue-900/50 text-blue-600 dark:text-blue-400 flex items-center justify-center mx-auto">
                 <Mail className="w-5 h-5" />
               </div>
               <div className="text-xs text-zinc-600 dark:text-zinc-300">
-                تم إرسال رمز الأمان المكون من 6 أرقام إلى:
+                حسابك بانتظار التأكيد لعنوان البريد:
               </div>
               <div className="font-mono font-bold text-sm text-blue-600 dark:text-blue-400 bg-white dark:bg-zinc-900/80 py-1 px-3 rounded-lg border border-zinc-200 dark:border-zinc-800 inline-block" dir="ltr">
                 {email}
               </div>
-              <div className="flex items-center justify-center gap-1.5 text-[11px] text-zinc-500 dark:text-zinc-400 pt-1">
-                <ShieldCheck className="w-3.5 h-3.5 text-emerald-500 shrink-0" />
-                <span>الرمز سري ومحمي؛ تفقد صندوق البريد الوارد الخاص بك</span>
-              </div>
             </div>
+
+            {/* Supabase Link vs Code Guidance Box */}
+            <div className="p-3.5 rounded-2xl bg-blue-50/80 dark:bg-blue-950/40 border border-blue-200 dark:border-blue-900/60 space-y-1.5 text-right">
+              <div className="flex items-center gap-2 text-xs font-bold text-blue-900 dark:text-blue-300">
+                <span>📬</span>
+                <span>تنبيه هام حول رسائل التأكيد:</span>
+              </div>
+              <p className="text-[11px] text-zinc-600 dark:text-zinc-300 leading-relaxed">
+                إذا وصلتك رسالة تحتوي على <strong>رابط تأكيد (Confirmation Link)</strong>، اضغط عليه في بريدك، ثم انقر على زر <strong>"تحقق من تفعيل الرابط"</strong> أدناه.
+                <br />
+                أما إذا كان بالرسالة <strong>رمز أرقام (OTP)</strong>، فاكتبه في الخانات الستة بالأسفل.
+              </p>
+            </div>
+
+            {/* Quick OTP Helper Banner (when code is available locally) */}
+            {activeOtpCode && (
+              <div className="p-3.5 bg-emerald-50 dark:bg-emerald-950/40 border border-emerald-200 dark:border-emerald-800/80 rounded-2xl flex items-center justify-between gap-3 text-xs sm:text-sm shadow-sm">
+                <div className="text-right space-y-0.5">
+                  <span className="text-zinc-600 dark:text-zinc-300 font-medium block text-xs">
+                    رمز التحقق السريع:
+                  </span>
+                  <span className="font-mono font-bold text-xl text-emerald-600 dark:text-emerald-400 tracking-widest block" dir="ltr">
+                    {activeOtpCode}
+                  </span>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => {
+                    const digits = activeOtpCode.slice(0, 6).split('');
+                    setOtpDigits(digits);
+                    otpInputRefs.current[5]?.focus();
+                  }}
+                  className="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-700 active:scale-95 text-white rounded-xl text-xs font-bold transition-all shadow-sm cursor-pointer whitespace-nowrap"
+                  id="auto-fill-otp-btn"
+                >
+                  تعبئة الرمز تلقائياً ⚡
+                </button>
+              </div>
+            )}
 
             {/* 6-Digit Segmented OTP Input */}
             <div className="space-y-2">
               <label className="text-xs font-semibold text-zinc-700 dark:text-zinc-300 block text-center">
-                أدخل رمز التأكيد (OTP)
+                أدخل رمز التأكيد (OTP) المكون من 6 أرقام:
               </label>
               <div className="flex justify-center items-center gap-2 sm:gap-2.5" dir="ltr">
                 {otpDigits.map((digit, idx) => (
@@ -637,36 +725,66 @@ export const AuthView: React.FC<AuthViewProps> = ({ onAuthSuccess }) => {
               ) : (
                 <>
                   <CheckCircle2 className="w-4 h-4" />
-                  <span>تأكيد الحساب والدخول</span>
+                  <span>تأكيد الحساب والدخول بالرمز</span>
                 </>
               )}
             </button>
 
-            {/* Resend Cooldown and Back to Login */}
-            <div className="flex items-center justify-between text-xs pt-1">
-              <button
-                type="button"
-                onClick={handleResend}
-                disabled={loading || resendCooldown > 0}
-                className="flex items-center gap-1.5 text-zinc-600 dark:text-zinc-400 hover:text-blue-600 dark:hover:text-blue-400 font-medium cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
-                id="resend-code-btn"
-              >
-                <RefreshCw className={`w-3.5 h-3.5 ${loading ? 'animate-spin' : ''}`} />
-                <span>
-                  {resendCooldown > 0 ? `إعادة الإرسال بعد (${resendCooldown}ث)` : 'إعادة إرسال الرمز'}
-                </span>
-              </button>
+            {/* Check Confirmation Link Button */}
+            <button
+              type="button"
+              onClick={handleCheckConfirmationLink}
+              disabled={checkingStatus}
+              className="w-full py-2 px-3 rounded-xl border border-blue-200 dark:border-blue-800/80 bg-blue-50/50 dark:bg-blue-950/30 hover:bg-blue-100 dark:hover:bg-blue-900/50 text-blue-700 dark:text-blue-300 text-xs font-medium flex items-center justify-center gap-2 transition-colors cursor-pointer disabled:opacity-50"
+              id="check-confirmation-link-btn"
+            >
+              {checkingStatus ? (
+                <div className="w-3.5 h-3.5 border-2 border-blue-600/30 border-t-blue-600 rounded-full animate-spin" />
+              ) : (
+                <RefreshCw className="w-3.5 h-3.5 text-blue-500" />
+              )}
+              <span>تحقق من تفعيل الرابط (إذا ضغطت عليه في الإيميل) 🔄</span>
+            </button>
 
-              <button
-                type="button"
-                onClick={() => {
-                  clearMessages();
-                  setMode('login');
-                }}
-                className="text-blue-600 dark:text-blue-400 font-medium hover:underline cursor-pointer"
-              >
-                تغيير البريد / العودة
-              </button>
+            {/* Resend Cooldown, Skip, and Back to Login */}
+            <div className="pt-2 border-t border-zinc-100 dark:border-zinc-800 space-y-2">
+              <div className="flex items-center justify-between text-xs">
+                <button
+                  type="button"
+                  onClick={handleResend}
+                  disabled={loading || resendCooldown > 0}
+                  className="flex items-center gap-1.5 text-zinc-600 dark:text-zinc-400 hover:text-blue-600 dark:hover:text-blue-400 font-medium cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
+                  id="resend-code-btn"
+                >
+                  <RefreshCw className={`w-3.5 h-3.5 ${loading ? 'animate-spin' : ''}`} />
+                  <span>
+                    {resendCooldown > 0 ? `إعادة الإرسال بعد (${resendCooldown}ث)` : 'إعادة إرسال الرمز أو الرابط'}
+                  </span>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={handleSkipVerification}
+                  className="text-amber-600 dark:text-amber-400 hover:underline font-bold cursor-pointer flex items-center gap-1 text-xs"
+                  id="skip-verification-btn"
+                  title="تخطي شاشة التأكيد والمتابعة للدخول مباشرة"
+                >
+                  <span>تخطي التأكيد والدخول ⚡</span>
+                </button>
+              </div>
+
+              <div className="text-center pt-1">
+                <button
+                  type="button"
+                  onClick={() => {
+                    clearMessages();
+                    setMode('login');
+                  }}
+                  className="text-zinc-500 hover:text-zinc-700 dark:hover:text-zinc-300 text-xs cursor-pointer"
+                >
+                  العودة إلى شاشة تسجيل الدخول
+                </button>
+              </div>
             </div>
           </form>
         )}

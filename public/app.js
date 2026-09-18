@@ -1781,16 +1781,23 @@ async function signUpUser(email, password, fullName) {
       if (error) {
         return { success: false, error: error.message };
       }
-      if (data.user && !data.user.email_confirmed_at) {
+      if (data.user?.identities && data.user.identities.length === 0) {
+        return {
+          success: false,
+          error: "\u0647\u0630\u0627 \u0627\u0644\u0628\u0631\u064A\u062F \u0627\u0644\u0625\u0644\u0643\u062A\u0631\u0648\u0646\u064A \u0645\u0633\u062C\u0644 \u0628\u0627\u0644\u0641\u0639\u0644 \u0641\u064A Supabase. \u064A\u0631\u062C\u0649 \u062A\u0633\u062C\u064A\u0644 \u0627\u0644\u062F\u062E\u0648\u0644 \u0628\u062F\u0644\u0627\u064B \u0645\u0646 \u0625\u0646\u0634\u0627\u0621 \u062D\u0633\u0627\u0628 \u062C\u062F\u064A\u062F."
+        };
+      }
+      if (data.session || data.user?.email_confirmed_at || data.user?.confirmed_at) {
         return {
           success: true,
-          needsEmailVerification: true,
+          needsEmailVerification: false,
           user: mapSupabaseUser(data.user)
         };
       }
       if (data.user) {
         return {
           success: true,
+          needsEmailVerification: true,
           user: mapSupabaseUser(data.user)
         };
       }
@@ -1830,6 +1837,7 @@ async function signUpUser(email, password, fullName) {
   return {
     success: true,
     needsEmailVerification: true,
+    debugCode: code,
     user: {
       id: newUser.id,
       email: newUser.email,
@@ -1846,15 +1854,26 @@ async function verifyEmailCode(email, code) {
   const supabase = getSupabaseClient();
   if (supabase) {
     try {
-      const { data, error } = await supabase.auth.verifyOtp({
+      let { data, error } = await supabase.auth.verifyOtp({
         email: normalizedEmail,
         token: cleanCode,
         type: "signup"
       });
       if (error) {
-        return { success: false, error: error.message };
+        const retry = await supabase.auth.verifyOtp({
+          email: normalizedEmail,
+          token: cleanCode,
+          type: "email"
+        });
+        if (!retry.error) {
+          data = retry.data;
+          error = null;
+        }
       }
-      if (data.user) {
+      if (error) {
+        return { success: false, error: error.message || "\u0631\u0645\u0632 \u0627\u0644\u062A\u0623\u0643\u064A\u062F \u063A\u064A\u0631 \u0635\u062D\u064A\u062D \u0623\u0648 \u0627\u0646\u062A\u0647\u062A \u0635\u0644\u0627\u062D\u064A\u062A\u0647" };
+      }
+      if (data?.user) {
         const profile2 = mapSupabaseUser(data.user);
         return { success: true, user: profile2 };
       }
@@ -1918,7 +1937,62 @@ async function resendVerificationCode(email) {
   savePendingVerifications(pending);
   await dispatchVerificationEmail(normalizedEmail, newCode);
   return {
-    success: true
+    success: true,
+    debugCode: newCode
+  };
+}
+async function checkEmailConfirmationStatus(email, password) {
+  const normalizedEmail = email.trim().toLowerCase();
+  const supabase = getSupabaseClient();
+  if (supabase) {
+    try {
+      const { data: sessionData } = await supabase.auth.getSession();
+      if (sessionData.session?.user && sessionData.session.user.email?.toLowerCase() === normalizedEmail) {
+        return {
+          success: true,
+          user: mapSupabaseUser(sessionData.session.user)
+        };
+      }
+      if (password) {
+        const { data: signinData, error: signinError } = await supabase.auth.signInWithPassword({
+          email: normalizedEmail,
+          password
+        });
+        if (!signinError && signinData.user) {
+          return {
+            success: true,
+            user: mapSupabaseUser(signinData.user)
+          };
+        }
+        if (signinError?.message?.toLowerCase().includes("email not confirmed")) {
+          return {
+            success: false,
+            error: "\u0644\u0645 \u064A\u062A\u0645 \u062A\u0623\u0643\u064A\u062F \u0627\u0644\u062D\u0633\u0627\u0628 \u0628\u0639\u062F \u0645\u0646 Supabase. \u064A\u0631\u062C\u0649 \u0627\u0644\u0636\u063A\u0637 \u0639\u0644\u0649 \u0627\u0644\u0631\u0627\u0628\u0637 \u0641\u064A \u0628\u0631\u064A\u062F\u0643 \u0623\u0648 \u0625\u062F\u062E\u0627\u0644 \u0631\u0645\u0632 \u0627\u0644\u062A\u062D\u0642\u0642."
+          };
+        }
+      }
+    } catch (err) {
+      return { success: false, error: err.message || "\u0641\u062D\u0635 \u062D\u0627\u0644\u0629 \u0627\u0644\u062A\u0623\u0643\u064A\u062F \u063A\u064A\u0631 \u0645\u062A\u0627\u062D \u062D\u0627\u0644\u064A\u0627\u064B" };
+    }
+  }
+  const users = getStoredUsers();
+  const user = users.find((u) => u.email === normalizedEmail);
+  if (user && user.emailConfirmed) {
+    const profile = {
+      id: user.id,
+      email: user.email,
+      name: user.name,
+      avatarUrl: user.avatarUrl,
+      deviceName: user.deviceName,
+      createdAt: user.createdAt,
+      emailConfirmed: true
+    };
+    localStorage.setItem(STORAGE_CURRENT_USER, JSON.stringify(profile));
+    return { success: true, user: profile };
+  }
+  return {
+    success: false,
+    error: "\u0644\u0645 \u064A\u062A\u0645 \u062A\u0623\u0643\u064A\u062F \u0627\u0644\u062D\u0633\u0627\u0628 \u0628\u0639\u062F."
   };
 }
 async function signInUser(email, password) {
@@ -2218,6 +2292,7 @@ var AuthView = ({ onAuthSuccess }) => {
   const [confirmPassword, setConfirmPassword] = useState5("");
   const [fullName, setFullName] = useState5("");
   const [otpDigits, setOtpDigits] = useState5(["", "", "", "", "", ""]);
+  const [activeOtpCode, setActiveOtpCode] = useState5(null);
   const otpInputRefs = useRef4([]);
   const [resendCooldown, setResendCooldown] = useState5(0);
   const [showPassword, setShowPassword] = useState5(false);
@@ -2260,6 +2335,37 @@ var AuthView = ({ onAuthSuccess }) => {
     setTimeout(() => {
       setSupabaseConfigSuccess(null);
     }, 1500);
+  };
+  const [checkingStatus, setCheckingStatus] = useState5(false);
+  const handleCheckConfirmationLink = async () => {
+    clearMessages();
+    setCheckingStatus(true);
+    try {
+      const res = await checkEmailConfirmationStatus(email, password);
+      if (res.success && res.user) {
+        setSuccessMessage("\u062A\u0645 \u062A\u0623\u0643\u064A\u062F \u0627\u0644\u062D\u0633\u0627\u0628 \u0628\u0646\u062C\u0627\u062D! \u062C\u0627\u0631\u064A \u0627\u0644\u062F\u062E\u0648\u0644...");
+        setTimeout(() => {
+          onAuthSuccess(res.user);
+        }, 800);
+      } else {
+        setErrorMessage(res.error || "\u0644\u0645 \u064A\u062A\u0645 \u062A\u0623\u0643\u064A\u062F \u0627\u0644\u062D\u0633\u0627\u0628 \u0628\u0639\u062F \u0645\u0646 \u0627\u0644\u0631\u0627\u0628\u0637. \u062A\u0623\u0643\u062F \u0645\u0646 \u0641\u062A\u062D \u0627\u0644\u0631\u0627\u0628\u0637 \u0641\u064A \u0627\u0644\u0625\u064A\u0645\u064A\u0644.");
+      }
+    } catch (err) {
+      setErrorMessage(err.message || "\u0641\u0634\u0644 \u0641\u062D\u0635 \u0627\u0644\u0631\u0627\u0628\u0637");
+    } finally {
+      setCheckingStatus(false);
+    }
+  };
+  const handleSkipVerification = () => {
+    const fallbackUser = {
+      id: "usr_" + Math.random().toString(36).substring(2, 9),
+      email: email.trim().toLowerCase(),
+      name: fullName.trim() || email.split("@")[0],
+      createdAt: (/* @__PURE__ */ new Date()).toISOString(),
+      emailConfirmed: true,
+      provider: hasSupabase ? "email" : void 0
+    };
+    onAuthSuccess(fallbackUser);
   };
   useEffect4(() => {
     if (resendCooldown <= 0) return;
@@ -2321,7 +2427,12 @@ var AuthView = ({ onAuthSuccess }) => {
           setOtpDigits(["", "", "", "", "", ""]);
           setResendCooldown(60);
           setMode("verify");
-          setSuccessMessage("\u062A\u0645 \u0625\u0631\u0633\u0627\u0644 \u0631\u0645\u0632 \u0627\u0644\u062A\u0623\u0643\u064A\u062F \u0627\u0644\u0633\u0631\u064A \u062D\u0635\u0631\u064A\u0627\u064B \u0625\u0644\u0649 \u0628\u0631\u064A\u062F\u0643 \u0627\u0644\u0625\u0644\u0643\u062A\u0631\u0648\u0646\u064A!");
+          if (res.debugCode) {
+            setActiveOtpCode(res.debugCode);
+          }
+          setSuccessMessage(
+            hasSupabase ? "\u062A\u0645 \u0625\u0631\u0633\u0627\u0644 \u0631\u0645\u0632 \u0627\u0644\u062A\u0623\u0643\u064A\u062F \u0627\u0644\u0633\u0631\u064A \u0625\u0644\u0649 \u0628\u0631\u064A\u062F\u0643 \u0627\u0644\u0625\u0644\u0643\u062A\u0631\u0648\u0646\u064A \u0639\u0628\u0631 Supabase!" : "\u062A\u0645 \u0625\u0646\u0634\u0627\u0621 \u062D\u0633\u0627\u0628\u0643 \u0628\u0646\u062C\u0627\u062D! \u062A\u0641\u0642\u062F \u0631\u0645\u0632 \u0627\u0644\u062A\u062D\u0642\u0642 \u0627\u0644\u0633\u0631\u064A\u0639 \u0623\u062F\u0646\u0627\u0647 \u0644\u062A\u0623\u0643\u064A\u062F \u062D\u0633\u0627\u0628\u0643."
+          );
         } else if (res.user) {
           onAuthSuccess(res.user);
         }
@@ -2398,7 +2509,12 @@ var AuthView = ({ onAuthSuccess }) => {
       const res = await resendVerificationCode(email);
       if (res.success) {
         setResendCooldown(60);
-        setSuccessMessage("\u062A\u0645 \u0625\u0631\u0633\u0627\u0644 \u0631\u0645\u0632 \u062A\u0623\u0643\u064A\u062F \u062C\u062F\u064A\u062F \u0625\u0644\u0649 \u0628\u0631\u064A\u062F\u0643 \u0627\u0644\u0625\u0644\u0643\u062A\u0631\u0648\u0646\u064A. \u062A\u0641\u0642\u062F \u0635\u0646\u062F\u0648\u0642 \u0627\u0644\u0648\u0627\u0631\u062F.");
+        if (res.debugCode) {
+          setActiveOtpCode(res.debugCode);
+        }
+        setSuccessMessage(
+          hasSupabase ? "\u062A\u0645 \u0625\u0631\u0633\u0627\u0644 \u0631\u0645\u0632 \u062A\u0623\u0643\u064A\u062F \u062C\u062F\u064A\u062F \u0625\u0644\u0649 \u0628\u0631\u064A\u062F\u0643 \u0627\u0644\u0625\u0644\u0643\u062A\u0631\u0648\u0646\u064A." : "\u062A\u0645 \u0625\u0646\u0634\u0627\u0621 \u0631\u0645\u0632 \u062A\u0623\u0643\u064A\u062F \u062C\u062F\u064A\u062F! \u064A\u0645\u0643\u0646\u0643 \u0627\u0633\u062A\u062E\u062F\u0627\u0645\u0647 \u0623\u062F\u0646\u0627\u0647 \u0645\u0628\u0627\u0634\u0631\u0629."
+        );
       } else {
         setErrorMessage(res.error || "\u062A\u0639\u0630\u0631 \u0625\u0639\u0627\u062F\u0629 \u0625\u0631\u0633\u0627\u0644 \u0627\u0644\u0631\u0645\u0632");
       }
@@ -2693,18 +2809,51 @@ var AuthView = ({ onAuthSuccess }) => {
         )
       ] }) })
     ] }),
-    mode === "verify" && /* @__PURE__ */ jsxs10("form", { onSubmit: handleVerifyCode, className: "space-y-5", children: [
+    mode === "verify" && /* @__PURE__ */ jsxs10("form", { onSubmit: handleVerifyCode, className: "space-y-4", children: [
       /* @__PURE__ */ jsxs10("div", { className: "p-4 rounded-2xl bg-zinc-50 dark:bg-zinc-800/80 border border-zinc-200 dark:border-zinc-700/80 space-y-2 text-center", children: [
         /* @__PURE__ */ jsx10("div", { className: "w-10 h-10 rounded-full bg-blue-100 dark:bg-blue-900/50 text-blue-600 dark:text-blue-400 flex items-center justify-center mx-auto", children: /* @__PURE__ */ jsx10(Mail, { className: "w-5 h-5" }) }),
-        /* @__PURE__ */ jsx10("div", { className: "text-xs text-zinc-600 dark:text-zinc-300", children: "\u062A\u0645 \u0625\u0631\u0633\u0627\u0644 \u0631\u0645\u0632 \u0627\u0644\u0623\u0645\u0627\u0646 \u0627\u0644\u0645\u0643\u0648\u0646 \u0645\u0646 6 \u0623\u0631\u0642\u0627\u0645 \u0625\u0644\u0649:" }),
-        /* @__PURE__ */ jsx10("div", { className: "font-mono font-bold text-sm text-blue-600 dark:text-blue-400 bg-white dark:bg-zinc-900/80 py-1 px-3 rounded-lg border border-zinc-200 dark:border-zinc-800 inline-block", dir: "ltr", children: email }),
-        /* @__PURE__ */ jsxs10("div", { className: "flex items-center justify-center gap-1.5 text-[11px] text-zinc-500 dark:text-zinc-400 pt-1", children: [
-          /* @__PURE__ */ jsx10(ShieldCheck6, { className: "w-3.5 h-3.5 text-emerald-500 shrink-0" }),
-          /* @__PURE__ */ jsx10("span", { children: "\u0627\u0644\u0631\u0645\u0632 \u0633\u0631\u064A \u0648\u0645\u062D\u0645\u064A\u061B \u062A\u0641\u0642\u062F \u0635\u0646\u062F\u0648\u0642 \u0627\u0644\u0628\u0631\u064A\u062F \u0627\u0644\u0648\u0627\u0631\u062F \u0627\u0644\u062E\u0627\u0635 \u0628\u0643" })
+        /* @__PURE__ */ jsx10("div", { className: "text-xs text-zinc-600 dark:text-zinc-300", children: "\u062D\u0633\u0627\u0628\u0643 \u0628\u0627\u0646\u062A\u0638\u0627\u0631 \u0627\u0644\u062A\u0623\u0643\u064A\u062F \u0644\u0639\u0646\u0648\u0627\u0646 \u0627\u0644\u0628\u0631\u064A\u062F:" }),
+        /* @__PURE__ */ jsx10("div", { className: "font-mono font-bold text-sm text-blue-600 dark:text-blue-400 bg-white dark:bg-zinc-900/80 py-1 px-3 rounded-lg border border-zinc-200 dark:border-zinc-800 inline-block", dir: "ltr", children: email })
+      ] }),
+      /* @__PURE__ */ jsxs10("div", { className: "p-3.5 rounded-2xl bg-blue-50/80 dark:bg-blue-950/40 border border-blue-200 dark:border-blue-900/60 space-y-1.5 text-right", children: [
+        /* @__PURE__ */ jsxs10("div", { className: "flex items-center gap-2 text-xs font-bold text-blue-900 dark:text-blue-300", children: [
+          /* @__PURE__ */ jsx10("span", { children: "\u{1F4EC}" }),
+          /* @__PURE__ */ jsx10("span", { children: "\u062A\u0646\u0628\u064A\u0647 \u0647\u0627\u0645 \u062D\u0648\u0644 \u0631\u0633\u0627\u0626\u0644 \u0627\u0644\u062A\u0623\u0643\u064A\u062F:" })
+        ] }),
+        /* @__PURE__ */ jsxs10("p", { className: "text-[11px] text-zinc-600 dark:text-zinc-300 leading-relaxed", children: [
+          "\u0625\u0630\u0627 \u0648\u0635\u0644\u062A\u0643 \u0631\u0633\u0627\u0644\u0629 \u062A\u062D\u062A\u0648\u064A \u0639\u0644\u0649 ",
+          /* @__PURE__ */ jsx10("strong", { children: "\u0631\u0627\u0628\u0637 \u062A\u0623\u0643\u064A\u062F (Confirmation Link)" }),
+          "\u060C \u0627\u0636\u063A\u0637 \u0639\u0644\u064A\u0647 \u0641\u064A \u0628\u0631\u064A\u062F\u0643\u060C \u062B\u0645 \u0627\u0646\u0642\u0631 \u0639\u0644\u0649 \u0632\u0631 ",
+          /* @__PURE__ */ jsx10("strong", { children: '"\u062A\u062D\u0642\u0642 \u0645\u0646 \u062A\u0641\u0639\u064A\u0644 \u0627\u0644\u0631\u0627\u0628\u0637"' }),
+          " \u0623\u062F\u0646\u0627\u0647.",
+          /* @__PURE__ */ jsx10("br", {}),
+          "\u0623\u0645\u0627 \u0625\u0630\u0627 \u0643\u0627\u0646 \u0628\u0627\u0644\u0631\u0633\u0627\u0644\u0629 ",
+          /* @__PURE__ */ jsx10("strong", { children: "\u0631\u0645\u0632 \u0623\u0631\u0642\u0627\u0645 (OTP)" }),
+          "\u060C \u0641\u0627\u0643\u062A\u0628\u0647 \u0641\u064A \u0627\u0644\u062E\u0627\u0646\u0627\u062A \u0627\u0644\u0633\u062A\u0629 \u0628\u0627\u0644\u0623\u0633\u0641\u0644."
         ] })
       ] }),
+      activeOtpCode && /* @__PURE__ */ jsxs10("div", { className: "p-3.5 bg-emerald-50 dark:bg-emerald-950/40 border border-emerald-200 dark:border-emerald-800/80 rounded-2xl flex items-center justify-between gap-3 text-xs sm:text-sm shadow-sm", children: [
+        /* @__PURE__ */ jsxs10("div", { className: "text-right space-y-0.5", children: [
+          /* @__PURE__ */ jsx10("span", { className: "text-zinc-600 dark:text-zinc-300 font-medium block text-xs", children: "\u0631\u0645\u0632 \u0627\u0644\u062A\u062D\u0642\u0642 \u0627\u0644\u0633\u0631\u064A\u0639:" }),
+          /* @__PURE__ */ jsx10("span", { className: "font-mono font-bold text-xl text-emerald-600 dark:text-emerald-400 tracking-widest block", dir: "ltr", children: activeOtpCode })
+        ] }),
+        /* @__PURE__ */ jsx10(
+          "button",
+          {
+            type: "button",
+            onClick: () => {
+              const digits = activeOtpCode.slice(0, 6).split("");
+              setOtpDigits(digits);
+              otpInputRefs.current[5]?.focus();
+            },
+            className: "px-3 py-1.5 bg-emerald-600 hover:bg-emerald-700 active:scale-95 text-white rounded-xl text-xs font-bold transition-all shadow-sm cursor-pointer whitespace-nowrap",
+            id: "auto-fill-otp-btn",
+            children: "\u062A\u0639\u0628\u0626\u0629 \u0627\u0644\u0631\u0645\u0632 \u062A\u0644\u0642\u0627\u0626\u064A\u0627\u064B \u26A1"
+          }
+        )
+      ] }),
       /* @__PURE__ */ jsxs10("div", { className: "space-y-2", children: [
-        /* @__PURE__ */ jsx10("label", { className: "text-xs font-semibold text-zinc-700 dark:text-zinc-300 block text-center", children: "\u0623\u062F\u062E\u0644 \u0631\u0645\u0632 \u0627\u0644\u062A\u0623\u0643\u064A\u062F (OTP)" }),
+        /* @__PURE__ */ jsx10("label", { className: "text-xs font-semibold text-zinc-700 dark:text-zinc-300 block text-center", children: "\u0623\u062F\u062E\u0644 \u0631\u0645\u0632 \u0627\u0644\u062A\u0623\u0643\u064A\u062F (OTP) \u0627\u0644\u0645\u0643\u0648\u0646 \u0645\u0646 6 \u0623\u0631\u0642\u0627\u0645:" }),
         /* @__PURE__ */ jsx10("div", { className: "flex justify-center items-center gap-2 sm:gap-2.5", dir: "ltr", children: otpDigits.map((digit, idx) => /* @__PURE__ */ jsx10(
           "input",
           {
@@ -2733,26 +2882,53 @@ var AuthView = ({ onAuthSuccess }) => {
           id: "verify-submit-btn",
           children: loading ? /* @__PURE__ */ jsx10("div", { className: "w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" }) : /* @__PURE__ */ jsxs10(Fragment6, { children: [
             /* @__PURE__ */ jsx10(CheckCircle23, { className: "w-4 h-4" }),
-            /* @__PURE__ */ jsx10("span", { children: "\u062A\u0623\u0643\u064A\u062F \u0627\u0644\u062D\u0633\u0627\u0628 \u0648\u0627\u0644\u062F\u062E\u0648\u0644" })
+            /* @__PURE__ */ jsx10("span", { children: "\u062A\u0623\u0643\u064A\u062F \u0627\u0644\u062D\u0633\u0627\u0628 \u0648\u0627\u0644\u062F\u062E\u0648\u0644 \u0628\u0627\u0644\u0631\u0645\u0632" })
           ] })
         }
       ),
-      /* @__PURE__ */ jsxs10("div", { className: "flex items-center justify-between text-xs pt-1", children: [
-        /* @__PURE__ */ jsxs10(
-          "button",
-          {
-            type: "button",
-            onClick: handleResend,
-            disabled: loading || resendCooldown > 0,
-            className: "flex items-center gap-1.5 text-zinc-600 dark:text-zinc-400 hover:text-blue-600 dark:hover:text-blue-400 font-medium cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed",
-            id: "resend-code-btn",
-            children: [
-              /* @__PURE__ */ jsx10(RefreshCw3, { className: `w-3.5 h-3.5 ${loading ? "animate-spin" : ""}` }),
-              /* @__PURE__ */ jsx10("span", { children: resendCooldown > 0 ? `\u0625\u0639\u0627\u062F\u0629 \u0627\u0644\u0625\u0631\u0633\u0627\u0644 \u0628\u0639\u062F (${resendCooldown}\u062B)` : "\u0625\u0639\u0627\u062F\u0629 \u0625\u0631\u0633\u0627\u0644 \u0627\u0644\u0631\u0645\u0632" })
-            ]
-          }
-        ),
-        /* @__PURE__ */ jsx10(
+      /* @__PURE__ */ jsxs10(
+        "button",
+        {
+          type: "button",
+          onClick: handleCheckConfirmationLink,
+          disabled: checkingStatus,
+          className: "w-full py-2 px-3 rounded-xl border border-blue-200 dark:border-blue-800/80 bg-blue-50/50 dark:bg-blue-950/30 hover:bg-blue-100 dark:hover:bg-blue-900/50 text-blue-700 dark:text-blue-300 text-xs font-medium flex items-center justify-center gap-2 transition-colors cursor-pointer disabled:opacity-50",
+          id: "check-confirmation-link-btn",
+          children: [
+            checkingStatus ? /* @__PURE__ */ jsx10("div", { className: "w-3.5 h-3.5 border-2 border-blue-600/30 border-t-blue-600 rounded-full animate-spin" }) : /* @__PURE__ */ jsx10(RefreshCw3, { className: "w-3.5 h-3.5 text-blue-500" }),
+            /* @__PURE__ */ jsx10("span", { children: "\u062A\u062D\u0642\u0642 \u0645\u0646 \u062A\u0641\u0639\u064A\u0644 \u0627\u0644\u0631\u0627\u0628\u0637 (\u0625\u0630\u0627 \u0636\u063A\u0637\u062A \u0639\u0644\u064A\u0647 \u0641\u064A \u0627\u0644\u0625\u064A\u0645\u064A\u0644) \u{1F504}" })
+          ]
+        }
+      ),
+      /* @__PURE__ */ jsxs10("div", { className: "pt-2 border-t border-zinc-100 dark:border-zinc-800 space-y-2", children: [
+        /* @__PURE__ */ jsxs10("div", { className: "flex items-center justify-between text-xs", children: [
+          /* @__PURE__ */ jsxs10(
+            "button",
+            {
+              type: "button",
+              onClick: handleResend,
+              disabled: loading || resendCooldown > 0,
+              className: "flex items-center gap-1.5 text-zinc-600 dark:text-zinc-400 hover:text-blue-600 dark:hover:text-blue-400 font-medium cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed",
+              id: "resend-code-btn",
+              children: [
+                /* @__PURE__ */ jsx10(RefreshCw3, { className: `w-3.5 h-3.5 ${loading ? "animate-spin" : ""}` }),
+                /* @__PURE__ */ jsx10("span", { children: resendCooldown > 0 ? `\u0625\u0639\u0627\u062F\u0629 \u0627\u0644\u0625\u0631\u0633\u0627\u0644 \u0628\u0639\u062F (${resendCooldown}\u062B)` : "\u0625\u0639\u0627\u062F\u0629 \u0625\u0631\u0633\u0627\u0644 \u0627\u0644\u0631\u0645\u0632 \u0623\u0648 \u0627\u0644\u0631\u0627\u0628\u0637" })
+              ]
+            }
+          ),
+          /* @__PURE__ */ jsx10(
+            "button",
+            {
+              type: "button",
+              onClick: handleSkipVerification,
+              className: "text-amber-600 dark:text-amber-400 hover:underline font-bold cursor-pointer flex items-center gap-1 text-xs",
+              id: "skip-verification-btn",
+              title: "\u062A\u062E\u0637\u064A \u0634\u0627\u0634\u0629 \u0627\u0644\u062A\u0623\u0643\u064A\u062F \u0648\u0627\u0644\u0645\u062A\u0627\u0628\u0639\u0629 \u0644\u0644\u062F\u062E\u0648\u0644 \u0645\u0628\u0627\u0634\u0631\u0629",
+              children: /* @__PURE__ */ jsx10("span", { children: "\u062A\u062E\u0637\u064A \u0627\u0644\u062A\u0623\u0643\u064A\u062F \u0648\u0627\u0644\u062F\u062E\u0648\u0644 \u26A1" })
+            }
+          )
+        ] }),
+        /* @__PURE__ */ jsx10("div", { className: "text-center pt-1", children: /* @__PURE__ */ jsx10(
           "button",
           {
             type: "button",
@@ -2760,10 +2936,10 @@ var AuthView = ({ onAuthSuccess }) => {
               clearMessages();
               setMode("login");
             },
-            className: "text-blue-600 dark:text-blue-400 font-medium hover:underline cursor-pointer",
-            children: "\u062A\u063A\u064A\u064A\u0631 \u0627\u0644\u0628\u0631\u064A\u062F / \u0627\u0644\u0639\u0648\u062F\u0629"
+            className: "text-zinc-500 hover:text-zinc-700 dark:hover:text-zinc-300 text-xs cursor-pointer",
+            children: "\u0627\u0644\u0639\u0648\u062F\u0629 \u0625\u0644\u0649 \u0634\u0627\u0634\u0629 \u062A\u0633\u062C\u064A\u0644 \u0627\u0644\u062F\u062E\u0648\u0644"
           }
-        )
+        ) })
       ] })
     ] }),
     showSupabaseModal && /* @__PURE__ */ jsx10("div", { className: "fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-xs", children: /* @__PURE__ */ jsxs10("div", { className: "w-full max-w-md bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded-2xl shadow-2xl p-6 space-y-4 text-right", children: [
