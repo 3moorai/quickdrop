@@ -7,6 +7,7 @@
     "dev": "tsx server.ts",
     "build": "node -e \"const fs=require('fs'); if(!fs.existsSync('dist')) fs.mkdirSync('dist'); fs.copyFileSync('index.html','dist/index.html'); fs.copyFileSync('app.js','dist/app.js');\"",
     "build:server": "esbuild server.ts --bundle --platform=node --format=cjs --packages=external --sourcemap --outfile=dist/server.cjs",
+    "deploy": "wrangler deploy --assets ./dist",
     "start": "node dist/server.cjs",
     "preview": "vite preview",
     "test": "tsx tests/transfer.test.ts && tsx tests/auth.test.ts",
