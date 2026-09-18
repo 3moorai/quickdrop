@@ -20,7 +20,10 @@ import {
   verifyEmailCode, 
   resendVerificationCode, 
   signInWithGoogle,
-  isSupabaseConfigured 
+  checkIsSupabaseConfigured,
+  getSupabaseCredentials,
+  saveSupabaseConfig,
+  clearSupabaseConfig
 } from '../lib/auth.ts';
 import { UserProfile } from '../types.ts';
 
@@ -48,6 +51,50 @@ export const AuthView: React.FC<AuthViewProps> = ({ onAuthSuccess }) => {
   const [loading, setLoading] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [successMessage, setSuccessMessage] = useState<string | null>(null);
+
+  // Supabase Configuration States
+  const [hasSupabase, setHasSupabase] = useState<boolean>(() => checkIsSupabaseConfigured());
+  const [showSupabaseModal, setShowSupabaseModal] = useState<boolean>(false);
+  const [supabaseUrlInput, setSupabaseUrlInput] = useState<string>(() => getSupabaseCredentials().url);
+  const [supabaseKeyInput, setSupabaseKeyInput] = useState<string>(() => getSupabaseCredentials().anonKey);
+  const [supabaseConfigSuccess, setSupabaseConfigSuccess] = useState<string | null>(null);
+  const [supabaseConfigError, setSupabaseConfigError] = useState<string | null>(null);
+
+  const handleSaveSupabaseConfig = () => {
+    setSupabaseConfigError(null);
+    setSupabaseConfigSuccess(null);
+    const cleanUrl = supabaseUrlInput.trim();
+    const cleanKey = supabaseKeyInput.trim();
+
+    if (!cleanUrl || !cleanKey) {
+      setSupabaseConfigError('يرجى إدخال كل من رابط المشروع Project URL ومفتاح الـ Anon Key.');
+      return;
+    }
+
+    if (!cleanUrl.startsWith('http://') && !cleanUrl.startsWith('https://')) {
+      setSupabaseConfigError('يجب أن يبدأ رابط المشروع بـ https:// (مثال: https://xxxx.supabase.co)');
+      return;
+    }
+
+    saveSupabaseConfig(cleanUrl, cleanKey);
+    setHasSupabase(true);
+    setSupabaseConfigSuccess('تم ربط وحفظ مشروع Supabase بنجاح! يعمل النظام الآن عبر سحابة Supabase.');
+    setTimeout(() => {
+      setSupabaseConfigSuccess(null);
+      setShowSupabaseModal(false);
+    }, 1500);
+  };
+
+  const handleResetSupabaseConfig = () => {
+    clearSupabaseConfig();
+    setHasSupabase(false);
+    setSupabaseUrlInput('');
+    setSupabaseKeyInput('');
+    setSupabaseConfigSuccess('تم فصل مشروع Supabase والعودة إلى المصادقة المحلية.');
+    setTimeout(() => {
+      setSupabaseConfigSuccess(null);
+    }, 1500);
+  };
 
   // Timer countdown effect for OTP resend
   useEffect(() => {
@@ -268,10 +315,20 @@ export const AuthView: React.FC<AuthViewProps> = ({ onAuthSuccess }) => {
             <ShieldCheck className="w-3.5 h-3.5 text-emerald-500" />
             <span>نظام الأمان:</span>
           </span>
-          <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full font-mono text-[11px] font-semibold bg-emerald-100 text-emerald-800 dark:bg-emerald-950/80 dark:text-emerald-300">
-            <span className="w-1.5 h-1.5 rounded-full bg-emerald-500" />
-            {isSupabaseConfigured ? 'Supabase Auth Cloud' : 'نظام المصادقة المشفر'}
-          </span>
+          <div className="flex items-center gap-2">
+            <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full font-mono text-[11px] font-semibold bg-emerald-100 text-emerald-800 dark:bg-emerald-950/80 dark:text-emerald-300">
+              <span className="w-1.5 h-1.5 rounded-full bg-emerald-500" />
+              {hasSupabase ? 'Supabase Auth Cloud' : 'نظام المصادقة المشفر'}
+            </span>
+            <button
+              type="button"
+              onClick={() => setShowSupabaseModal(true)}
+              className="px-2 py-0.5 rounded-md bg-zinc-200 hover:bg-zinc-300 dark:bg-zinc-700 dark:hover:bg-zinc-600 text-zinc-700 dark:text-zinc-200 text-[11px] font-medium transition-colors cursor-pointer"
+              title="إعدادات وربط Supabase"
+            >
+              ⚙️ {hasSupabase ? 'إعدادات' : 'ربط Supabase'}
+            </button>
+          </div>
         </div>
 
         {/* Error and Success Alerts */}
@@ -612,6 +669,97 @@ export const AuthView: React.FC<AuthViewProps> = ({ onAuthSuccess }) => {
               </button>
             </div>
           </form>
+        )}
+        {/* Supabase Configuration Modal */}
+        {showSupabaseModal && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-xs">
+            <div className="w-full max-w-md bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded-2xl shadow-2xl p-6 space-y-4 text-right">
+              <div className="flex items-center justify-between border-b border-zinc-100 dark:border-zinc-800 pb-3">
+                <button
+                  type="button"
+                  onClick={() => setShowSupabaseModal(false)}
+                  className="p-1 rounded-lg text-zinc-400 hover:text-zinc-600 dark:hover:text-zinc-200 cursor-pointer"
+                >
+                  ✕
+                </button>
+                <div className="flex items-center gap-2">
+                  <span className="font-bold text-sm text-zinc-900 dark:text-zinc-100">إعدادات وربط Supabase</span>
+                  <div className="w-6 h-6 rounded-lg bg-emerald-500/10 text-emerald-500 flex items-center justify-center font-bold text-xs">
+                    ⚡
+                  </div>
+                </div>
+              </div>
+
+              <p className="text-xs text-zinc-500 dark:text-zinc-400 leading-relaxed">
+                اربط مشروعك على <strong>Supabase</strong> لتشغيل تسجيل الدخول السحابي الفعلي، وتأكيد البريد الإلكتروني (OTP)، وحفظ المستخدمين في لوحة تحكم Supabase الخاصة بك.
+              </p>
+
+              {supabaseConfigError && (
+                <div className="p-3 rounded-xl bg-rose-50 dark:bg-rose-950/50 border border-rose-200 dark:border-rose-900/60 text-xs text-rose-700 dark:text-rose-300">
+                  {supabaseConfigError}
+                </div>
+              )}
+
+              {supabaseConfigSuccess && (
+                <div className="p-3 rounded-xl bg-emerald-50 dark:bg-emerald-950/50 border border-emerald-200 dark:border-emerald-900/60 text-xs text-emerald-700 dark:text-emerald-300">
+                  {supabaseConfigSuccess}
+                </div>
+              )}
+
+              <div className="space-y-3">
+                <div className="space-y-1">
+                  <label className="text-xs font-semibold text-zinc-700 dark:text-zinc-300 block">
+                    Supabase Project URL:
+                  </label>
+                  <input
+                    type="url"
+                    placeholder="https://xyzproject.supabase.co"
+                    value={supabaseUrlInput}
+                    onChange={(e) => setSupabaseUrlInput(e.target.value)}
+                    className="w-full px-3 py-2 rounded-xl border border-zinc-200 dark:border-zinc-700 bg-zinc-50 dark:bg-zinc-800 text-xs text-zinc-900 dark:text-zinc-100 text-left font-mono"
+                    dir="ltr"
+                  />
+                </div>
+
+                <div className="space-y-1">
+                  <label className="text-xs font-semibold text-zinc-700 dark:text-zinc-300 block">
+                    Supabase Anon Public Key:
+                  </label>
+                  <input
+                    type="text"
+                    placeholder="eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..."
+                    value={supabaseKeyInput}
+                    onChange={(e) => setSupabaseKeyInput(e.target.value)}
+                    className="w-full px-3 py-2 rounded-xl border border-zinc-200 dark:border-zinc-700 bg-zinc-50 dark:bg-zinc-800 text-xs text-zinc-900 dark:text-zinc-100 text-left font-mono"
+                    dir="ltr"
+                  />
+                </div>
+
+                <div className="p-2.5 rounded-xl bg-blue-50 dark:bg-blue-950/40 border border-blue-200 dark:border-blue-900/50 text-[11px] text-blue-700 dark:text-blue-300 leading-relaxed">
+                  💡 تجد هذه القيم في لوحة تحكم <strong>Supabase Dashboard</strong> ⬅️ <strong>Project Settings</strong> ⬅️ <strong>API</strong>.
+                </div>
+
+                <div className="flex items-center gap-2 pt-2">
+                  <button
+                    type="button"
+                    onClick={handleSaveSupabaseConfig}
+                    className="flex-1 py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-bold transition-colors cursor-pointer"
+                  >
+                    حفظ وربط Supabase
+                  </button>
+                  {hasSupabase && (
+                    <button
+                      type="button"
+                      onClick={handleResetSupabaseConfig}
+                      className="px-3 py-2.5 bg-rose-50 hover:bg-rose-100 dark:bg-rose-950/50 text-rose-600 dark:text-rose-400 border border-rose-200 dark:border-rose-900 rounded-xl text-xs font-medium transition-colors cursor-pointer"
+                    >
+                      فصل المشروع
+                    </button>
+                  )}
+                </div>
+              </div>
+            </div>
+          </div>
         )}
       </div>
     </div>

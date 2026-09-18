@@ -1655,16 +1655,57 @@ import {
 
 // src/lib/auth.ts
 import { createClient } from "@supabase/supabase-js";
-var SUPABASE_URL = (typeof import.meta !== "undefined" && import.meta.env ? import.meta.env.VITE_SUPABASE_URL : "") || "";
-var SUPABASE_ANON_KEY = (typeof import.meta !== "undefined" && import.meta.env ? import.meta.env.VITE_SUPABASE_ANON_KEY : "") || "";
-var isSupabaseConfigured = Boolean(
-  SUPABASE_URL && SUPABASE_ANON_KEY && !SUPABASE_URL.includes("your-project") && !SUPABASE_ANON_KEY.includes("your-anon-key")
-);
+function getSupabaseCredentials() {
+  const envUrl = (typeof import.meta !== "undefined" && import.meta.env ? import.meta.env.VITE_SUPABASE_URL : "") || "";
+  const envKey = (typeof import.meta !== "undefined" && import.meta.env ? import.meta.env.VITE_SUPABASE_ANON_KEY : "") || "";
+  let localUrl = "";
+  let localKey = "";
+  try {
+    if (typeof localStorage !== "undefined") {
+      localUrl = localStorage.getItem("quickdrop_supabase_url") || "";
+      localKey = localStorage.getItem("quickdrop_supabase_anon_key") || "";
+    }
+  } catch {
+  }
+  const url = (envUrl || localUrl).trim();
+  const anonKey = (envKey || localKey).trim();
+  const isConfigured = Boolean(
+    url && anonKey && !url.includes("your-project") && !anonKey.includes("your-anon-key")
+  );
+  return { url, anonKey, isConfigured };
+}
+function checkIsSupabaseConfigured() {
+  return getSupabaseCredentials().isConfigured;
+}
+function saveSupabaseConfig(url, anonKey) {
+  try {
+    if (typeof localStorage !== "undefined") {
+      localStorage.setItem("quickdrop_supabase_url", url.trim());
+      localStorage.setItem("quickdrop_supabase_anon_key", anonKey.trim());
+      supabaseInstance = null;
+      return true;
+    }
+  } catch {
+  }
+  return false;
+}
+function clearSupabaseConfig() {
+  try {
+    if (typeof localStorage !== "undefined") {
+      localStorage.removeItem("quickdrop_supabase_url");
+      localStorage.removeItem("quickdrop_supabase_anon_key");
+      supabaseInstance = null;
+    }
+  } catch {
+  }
+}
+var isSupabaseConfigured = checkIsSupabaseConfigured();
 var supabaseInstance = null;
 function getSupabaseClient() {
-  if (!isSupabaseConfigured) return null;
+  const { url, anonKey, isConfigured } = getSupabaseCredentials();
+  if (!isConfigured) return null;
   if (!supabaseInstance) {
-    supabaseInstance = createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
+    supabaseInstance = createClient(url, anonKey, {
       auth: {
         persistSession: true,
         autoRefreshToken: true,
@@ -2183,6 +2224,43 @@ var AuthView = ({ onAuthSuccess }) => {
   const [loading, setLoading] = useState5(false);
   const [errorMessage, setErrorMessage] = useState5(null);
   const [successMessage, setSuccessMessage] = useState5(null);
+  const [hasSupabase, setHasSupabase] = useState5(() => checkIsSupabaseConfigured());
+  const [showSupabaseModal, setShowSupabaseModal] = useState5(false);
+  const [supabaseUrlInput, setSupabaseUrlInput] = useState5(() => getSupabaseCredentials().url);
+  const [supabaseKeyInput, setSupabaseKeyInput] = useState5(() => getSupabaseCredentials().anonKey);
+  const [supabaseConfigSuccess, setSupabaseConfigSuccess] = useState5(null);
+  const [supabaseConfigError, setSupabaseConfigError] = useState5(null);
+  const handleSaveSupabaseConfig = () => {
+    setSupabaseConfigError(null);
+    setSupabaseConfigSuccess(null);
+    const cleanUrl = supabaseUrlInput.trim();
+    const cleanKey = supabaseKeyInput.trim();
+    if (!cleanUrl || !cleanKey) {
+      setSupabaseConfigError("\u064A\u0631\u062C\u0649 \u0625\u062F\u062E\u0627\u0644 \u0643\u0644 \u0645\u0646 \u0631\u0627\u0628\u0637 \u0627\u0644\u0645\u0634\u0631\u0648\u0639 Project URL \u0648\u0645\u0641\u062A\u0627\u062D \u0627\u0644\u0640 Anon Key.");
+      return;
+    }
+    if (!cleanUrl.startsWith("http://") && !cleanUrl.startsWith("https://")) {
+      setSupabaseConfigError("\u064A\u062C\u0628 \u0623\u0646 \u064A\u0628\u062F\u0623 \u0631\u0627\u0628\u0637 \u0627\u0644\u0645\u0634\u0631\u0648\u0639 \u0628\u0640 https:// (\u0645\u062B\u0627\u0644: https://xxxx.supabase.co)");
+      return;
+    }
+    saveSupabaseConfig(cleanUrl, cleanKey);
+    setHasSupabase(true);
+    setSupabaseConfigSuccess("\u062A\u0645 \u0631\u0628\u0637 \u0648\u062D\u0641\u0638 \u0645\u0634\u0631\u0648\u0639 Supabase \u0628\u0646\u062C\u0627\u062D! \u064A\u0639\u0645\u0644 \u0627\u0644\u0646\u0638\u0627\u0645 \u0627\u0644\u0622\u0646 \u0639\u0628\u0631 \u0633\u062D\u0627\u0628\u0629 Supabase.");
+    setTimeout(() => {
+      setSupabaseConfigSuccess(null);
+      setShowSupabaseModal(false);
+    }, 1500);
+  };
+  const handleResetSupabaseConfig = () => {
+    clearSupabaseConfig();
+    setHasSupabase(false);
+    setSupabaseUrlInput("");
+    setSupabaseKeyInput("");
+    setSupabaseConfigSuccess("\u062A\u0645 \u0641\u0635\u0644 \u0645\u0634\u0631\u0648\u0639 Supabase \u0648\u0627\u0644\u0639\u0648\u062F\u0629 \u0625\u0644\u0649 \u0627\u0644\u0645\u0635\u0627\u062F\u0642\u0629 \u0627\u0644\u0645\u062D\u0644\u064A\u0629.");
+    setTimeout(() => {
+      setSupabaseConfigSuccess(null);
+    }, 1500);
+  };
   useEffect4(() => {
     if (resendCooldown <= 0) return;
     const interval = setInterval(() => {
@@ -2365,9 +2443,24 @@ var AuthView = ({ onAuthSuccess }) => {
         /* @__PURE__ */ jsx10(ShieldCheck6, { className: "w-3.5 h-3.5 text-emerald-500" }),
         /* @__PURE__ */ jsx10("span", { children: "\u0646\u0638\u0627\u0645 \u0627\u0644\u0623\u0645\u0627\u0646:" })
       ] }),
-      /* @__PURE__ */ jsxs10("span", { className: "inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full font-mono text-[11px] font-semibold bg-emerald-100 text-emerald-800 dark:bg-emerald-950/80 dark:text-emerald-300", children: [
-        /* @__PURE__ */ jsx10("span", { className: "w-1.5 h-1.5 rounded-full bg-emerald-500" }),
-        isSupabaseConfigured ? "Supabase Auth Cloud" : "\u0646\u0638\u0627\u0645 \u0627\u0644\u0645\u0635\u0627\u062F\u0642\u0629 \u0627\u0644\u0645\u0634\u0641\u0631"
+      /* @__PURE__ */ jsxs10("div", { className: "flex items-center gap-2", children: [
+        /* @__PURE__ */ jsxs10("span", { className: "inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full font-mono text-[11px] font-semibold bg-emerald-100 text-emerald-800 dark:bg-emerald-950/80 dark:text-emerald-300", children: [
+          /* @__PURE__ */ jsx10("span", { className: "w-1.5 h-1.5 rounded-full bg-emerald-500" }),
+          hasSupabase ? "Supabase Auth Cloud" : "\u0646\u0638\u0627\u0645 \u0627\u0644\u0645\u0635\u0627\u062F\u0642\u0629 \u0627\u0644\u0645\u0634\u0641\u0631"
+        ] }),
+        /* @__PURE__ */ jsxs10(
+          "button",
+          {
+            type: "button",
+            onClick: () => setShowSupabaseModal(true),
+            className: "px-2 py-0.5 rounded-md bg-zinc-200 hover:bg-zinc-300 dark:bg-zinc-700 dark:hover:bg-zinc-600 text-zinc-700 dark:text-zinc-200 text-[11px] font-medium transition-colors cursor-pointer",
+            title: "\u0625\u0639\u062F\u0627\u062F\u0627\u062A \u0648\u0631\u0628\u0637 Supabase",
+            children: [
+              "\u2699\uFE0F ",
+              hasSupabase ? "\u0625\u0639\u062F\u0627\u062F\u0627\u062A" : "\u0631\u0628\u0637 Supabase"
+            ]
+          }
+        )
       ] })
     ] }),
     errorMessage && /* @__PURE__ */ jsxs10("div", { className: "p-3.5 rounded-xl bg-rose-50 dark:bg-rose-950/50 border border-rose-200 dark:border-rose-900/60 text-xs text-rose-700 dark:text-rose-300 flex items-start gap-2.5", children: [
@@ -2672,7 +2765,90 @@ var AuthView = ({ onAuthSuccess }) => {
           }
         )
       ] })
-    ] })
+    ] }),
+    showSupabaseModal && /* @__PURE__ */ jsx10("div", { className: "fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-xs", children: /* @__PURE__ */ jsxs10("div", { className: "w-full max-w-md bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded-2xl shadow-2xl p-6 space-y-4 text-right", children: [
+      /* @__PURE__ */ jsxs10("div", { className: "flex items-center justify-between border-b border-zinc-100 dark:border-zinc-800 pb-3", children: [
+        /* @__PURE__ */ jsx10(
+          "button",
+          {
+            type: "button",
+            onClick: () => setShowSupabaseModal(false),
+            className: "p-1 rounded-lg text-zinc-400 hover:text-zinc-600 dark:hover:text-zinc-200 cursor-pointer",
+            children: "\u2715"
+          }
+        ),
+        /* @__PURE__ */ jsxs10("div", { className: "flex items-center gap-2", children: [
+          /* @__PURE__ */ jsx10("span", { className: "font-bold text-sm text-zinc-900 dark:text-zinc-100", children: "\u0625\u0639\u062F\u0627\u062F\u0627\u062A \u0648\u0631\u0628\u0637 Supabase" }),
+          /* @__PURE__ */ jsx10("div", { className: "w-6 h-6 rounded-lg bg-emerald-500/10 text-emerald-500 flex items-center justify-center font-bold text-xs", children: "\u26A1" })
+        ] })
+      ] }),
+      /* @__PURE__ */ jsxs10("p", { className: "text-xs text-zinc-500 dark:text-zinc-400 leading-relaxed", children: [
+        "\u0627\u0631\u0628\u0637 \u0645\u0634\u0631\u0648\u0639\u0643 \u0639\u0644\u0649 ",
+        /* @__PURE__ */ jsx10("strong", { children: "Supabase" }),
+        " \u0644\u062A\u0634\u063A\u064A\u0644 \u062A\u0633\u062C\u064A\u0644 \u0627\u0644\u062F\u062E\u0648\u0644 \u0627\u0644\u0633\u062D\u0627\u0628\u064A \u0627\u0644\u0641\u0639\u0644\u064A\u060C \u0648\u062A\u0623\u0643\u064A\u062F \u0627\u0644\u0628\u0631\u064A\u062F \u0627\u0644\u0625\u0644\u0643\u062A\u0631\u0648\u0646\u064A (OTP)\u060C \u0648\u062D\u0641\u0638 \u0627\u0644\u0645\u0633\u062A\u062E\u062F\u0645\u064A\u0646 \u0641\u064A \u0644\u0648\u062D\u0629 \u062A\u062D\u0643\u0645 Supabase \u0627\u0644\u062E\u0627\u0635\u0629 \u0628\u0643."
+      ] }),
+      supabaseConfigError && /* @__PURE__ */ jsx10("div", { className: "p-3 rounded-xl bg-rose-50 dark:bg-rose-950/50 border border-rose-200 dark:border-rose-900/60 text-xs text-rose-700 dark:text-rose-300", children: supabaseConfigError }),
+      supabaseConfigSuccess && /* @__PURE__ */ jsx10("div", { className: "p-3 rounded-xl bg-emerald-50 dark:bg-emerald-950/50 border border-emerald-200 dark:border-emerald-900/60 text-xs text-emerald-700 dark:text-emerald-300", children: supabaseConfigSuccess }),
+      /* @__PURE__ */ jsxs10("div", { className: "space-y-3", children: [
+        /* @__PURE__ */ jsxs10("div", { className: "space-y-1", children: [
+          /* @__PURE__ */ jsx10("label", { className: "text-xs font-semibold text-zinc-700 dark:text-zinc-300 block", children: "Supabase Project URL:" }),
+          /* @__PURE__ */ jsx10(
+            "input",
+            {
+              type: "url",
+              placeholder: "https://xyzproject.supabase.co",
+              value: supabaseUrlInput,
+              onChange: (e) => setSupabaseUrlInput(e.target.value),
+              className: "w-full px-3 py-2 rounded-xl border border-zinc-200 dark:border-zinc-700 bg-zinc-50 dark:bg-zinc-800 text-xs text-zinc-900 dark:text-zinc-100 text-left font-mono",
+              dir: "ltr"
+            }
+          )
+        ] }),
+        /* @__PURE__ */ jsxs10("div", { className: "space-y-1", children: [
+          /* @__PURE__ */ jsx10("label", { className: "text-xs font-semibold text-zinc-700 dark:text-zinc-300 block", children: "Supabase Anon Public Key:" }),
+          /* @__PURE__ */ jsx10(
+            "input",
+            {
+              type: "text",
+              placeholder: "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...",
+              value: supabaseKeyInput,
+              onChange: (e) => setSupabaseKeyInput(e.target.value),
+              className: "w-full px-3 py-2 rounded-xl border border-zinc-200 dark:border-zinc-700 bg-zinc-50 dark:bg-zinc-800 text-xs text-zinc-900 dark:text-zinc-100 text-left font-mono",
+              dir: "ltr"
+            }
+          )
+        ] }),
+        /* @__PURE__ */ jsxs10("div", { className: "p-2.5 rounded-xl bg-blue-50 dark:bg-blue-950/40 border border-blue-200 dark:border-blue-900/50 text-[11px] text-blue-700 dark:text-blue-300 leading-relaxed", children: [
+          "\u{1F4A1} \u062A\u062C\u062F \u0647\u0630\u0647 \u0627\u0644\u0642\u064A\u0645 \u0641\u064A \u0644\u0648\u062D\u0629 \u062A\u062D\u0643\u0645 ",
+          /* @__PURE__ */ jsx10("strong", { children: "Supabase Dashboard" }),
+          " \u2B05\uFE0F ",
+          /* @__PURE__ */ jsx10("strong", { children: "Project Settings" }),
+          " \u2B05\uFE0F ",
+          /* @__PURE__ */ jsx10("strong", { children: "API" }),
+          "."
+        ] }),
+        /* @__PURE__ */ jsxs10("div", { className: "flex items-center gap-2 pt-2", children: [
+          /* @__PURE__ */ jsx10(
+            "button",
+            {
+              type: "button",
+              onClick: handleSaveSupabaseConfig,
+              className: "flex-1 py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-bold transition-colors cursor-pointer",
+              children: "\u062D\u0641\u0638 \u0648\u0631\u0628\u0637 Supabase"
+            }
+          ),
+          hasSupabase && /* @__PURE__ */ jsx10(
+            "button",
+            {
+              type: "button",
+              onClick: handleResetSupabaseConfig,
+              className: "px-3 py-2.5 bg-rose-50 hover:bg-rose-100 dark:bg-rose-950/50 text-rose-600 dark:text-rose-400 border border-rose-200 dark:border-rose-900 rounded-xl text-xs font-medium transition-colors cursor-pointer",
+              children: "\u0641\u0635\u0644 \u0627\u0644\u0645\u0634\u0631\u0648\u0639"
+            }
+          )
+        ] })
+      ] })
+    ] }) })
   ] }) });
 };
 

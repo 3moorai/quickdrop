@@ -7,22 +7,67 @@
 import { createClient, SupabaseClient, User } from '@supabase/supabase-js';
 import { UserProfile } from '../types.ts';
 
-const SUPABASE_URL = (typeof import.meta !== 'undefined' && import.meta.env ? import.meta.env.VITE_SUPABASE_URL : '') || '';
-const SUPABASE_ANON_KEY = (typeof import.meta !== 'undefined' && import.meta.env ? import.meta.env.VITE_SUPABASE_ANON_KEY : '') || '';
+export function getSupabaseCredentials(): { url: string; anonKey: string; isConfigured: boolean } {
+  const envUrl = (typeof import.meta !== 'undefined' && import.meta.env ? import.meta.env.VITE_SUPABASE_URL : '') || '';
+  const envKey = (typeof import.meta !== 'undefined' && import.meta.env ? import.meta.env.VITE_SUPABASE_ANON_KEY : '') || '';
 
-export const isSupabaseConfigured = Boolean(
-  SUPABASE_URL && 
-  SUPABASE_ANON_KEY && 
-  !SUPABASE_URL.includes('your-project') &&
-  !SUPABASE_ANON_KEY.includes('your-anon-key')
-);
+  let localUrl = '';
+  let localKey = '';
+  try {
+    if (typeof localStorage !== 'undefined') {
+      localUrl = localStorage.getItem('quickdrop_supabase_url') || '';
+      localKey = localStorage.getItem('quickdrop_supabase_anon_key') || '';
+    }
+  } catch {}
+
+  const url = (envUrl || localUrl).trim();
+  const anonKey = (envKey || localKey).trim();
+
+  const isConfigured = Boolean(
+    url && 
+    anonKey && 
+    !url.includes('your-project') &&
+    !anonKey.includes('your-anon-key')
+  );
+
+  return { url, anonKey, isConfigured };
+}
+
+export function checkIsSupabaseConfigured(): boolean {
+  return getSupabaseCredentials().isConfigured;
+}
+
+export function saveSupabaseConfig(url: string, anonKey: string): boolean {
+  try {
+    if (typeof localStorage !== 'undefined') {
+      localStorage.setItem('quickdrop_supabase_url', url.trim());
+      localStorage.setItem('quickdrop_supabase_anon_key', anonKey.trim());
+      supabaseInstance = null;
+      return true;
+    }
+  } catch {}
+  return false;
+}
+
+export function clearSupabaseConfig(): void {
+  try {
+    if (typeof localStorage !== 'undefined') {
+      localStorage.removeItem('quickdrop_supabase_url');
+      localStorage.removeItem('quickdrop_supabase_anon_key');
+      supabaseInstance = null;
+    }
+  } catch {}
+}
+
+export const isSupabaseConfigured = checkIsSupabaseConfigured();
 
 let supabaseInstance: SupabaseClient | null = null;
 
 export function getSupabaseClient(): SupabaseClient | null {
-  if (!isSupabaseConfigured) return null;
+  const { url, anonKey, isConfigured } = getSupabaseCredentials();
+  if (!isConfigured) return null;
   if (!supabaseInstance) {
-    supabaseInstance = createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
+    supabaseInstance = createClient(url, anonKey, {
       auth: {
         persistSession: true,
         autoRefreshToken: true,
