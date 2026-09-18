@@ -24,7 +24,9 @@ import {
   ShieldCheck, 
   Zap,
   ArrowUpRight,
-  ArrowDownLeft
+  ArrowDownLeft,
+  CloudUpload,
+  HardDrive
 } from 'lucide-react';
 import { DeviceInfo, FileTransferItem, TextTransferItem } from '../types.ts';
 import { formatBytes, formatSpeed, formatEta, isValidUrl } from '../lib/crypto.ts';
@@ -42,6 +44,8 @@ interface TransferDashboardProps {
   onCancelTransfer: (itemId: string) => void;
   autoAccept: boolean;
   onToggleAutoAccept: (value: boolean) => void;
+  sessionRole?: 'host' | 'joiner';
+  onUploadCloudFallback?: (file: File) => Promise<void>;
 }
 
 export const TransferDashboard: React.FC<TransferDashboardProps> = ({
@@ -57,18 +61,49 @@ export const TransferDashboard: React.FC<TransferDashboardProps> = ({
   onCancelTransfer,
   autoAccept,
   onToggleAutoAccept,
+  sessionRole = 'host',
+  onUploadCloudFallback,
 }) => {
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const imageInputRef = useRef<HTMLInputElement | null>(null);
   const folderInputRef = useRef<HTMLInputElement | null>(null);
+  const cloudFileInputRef = useRef<HTMLInputElement | null>(null);
 
   const [isDraggingOver, setIsDraggingOver] = useState(false);
   const [textInput, setTextInput] = useState('');
   const [activeSubTab, setActiveSubTab] = useState<'files' | 'text'>('files');
   const [copiedTextId, setCopiedTextId] = useState<string | null>(null);
+  const [saveNotification, setSaveNotification] = useState<{ message: string; type: 'success' | 'info' } | null>(null);
+  const [hasAttemptedMobileAutoPick, setHasAttemptedMobileAutoPick] = useState(false);
+
+  // Detect mobile environment
+  const isMobile = localDeviceInfo.type === 'mobile' || 
+    (typeof navigator !== 'undefined' && /android|iphone|ipad|ipod|mobile/i.test(navigator.userAgent));
+
+  // Check if File System Access API is supported (Desktop Chromium browsers)
+  const hasFileSystemAccess = typeof window !== 'undefined' && 'showSaveFilePicker' in window;
 
   // Folder support detection
   const isFolderSupported = typeof window !== 'undefined' && 'webkitdirectory' in document.createElement('input');
+
+  // Automatic Mobile Picker Attempt upon pairing
+  useEffect(() => {
+    if (isMobile && !hasAttemptedMobileAutoPick && files.length === 0) {
+      setHasAttemptedMobileAutoPick(true);
+      // Attempt to open native picker (if allowed by browser's current interaction context)
+      try {
+        if (fileInputRef.current) {
+          if ('showPicker' in fileInputRef.current) {
+            (fileInputRef.current as any).showPicker();
+          } else {
+            fileInputRef.current.click();
+          }
+        }
+      } catch {
+        // Handled smoothly by the prominent hero action button
+      }
+    }
+  }, [isMobile, hasAttemptedMobileAutoPick, files.length]);
 
   // Drag and drop listeners on window
   useEffect(() => {
@@ -131,6 +166,71 @@ export const TransferDashboard: React.FC<TransferDashboardProps> = ({
     } catch {}
   };
 
+  // Direct Save via File System Access API (showSaveFilePicker)
+  const handleSaveWithSystemPicker = async (item: FileTransferItem) => {
+    if (!item.blobUrl) return;
+
+    if (!hasFileSystemAccess) {
+      triggerAnchorDownload(item);
+      return;
+    }
+
+    try {
+      const ext = item.name.includes('.') ? '.' + item.name.split('.').pop() : '';
+      const handle = await (window as any).showSaveFilePicker({
+        suggestedName: item.name,
+        types: [
+          {
+            description: 'QuickDrop Received File',
+            accept: {
+              [item.type || 'application/octet-stream']: ext ? [ext] : [],
+            },
+          },
+        ],
+      });
+
+      const writable = await handle.createWritable();
+      const response = await fetch(item.blobUrl);
+      const blob = await response.blob();
+      await writable.write(blob);
+      await writable.close();
+
+      setSaveNotification({
+        message: `تم حفظ "${item.name}" بنجاح في المسار الذي حددته! ✅`,
+        type: 'success',
+      });
+      setTimeout(() => setSaveNotification(null), 4000);
+    } catch (err: any) {
+      if (err.name === 'AbortError') {
+        // User cancelled picker dialog
+        return;
+      }
+      console.warn('showSaveFilePicker failed or restricted, using direct download:', err);
+      triggerAnchorDownload(item);
+    }
+  };
+
+  // Fallback direct anchor download
+  const triggerAnchorDownload = (item: FileTransferItem) => {
+    if (!item.blobUrl) return;
+    try {
+      const a = document.createElement('a');
+      a.href = item.blobUrl;
+      a.download = item.name;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+
+      setSaveNotification({
+        message: `تم تنزيل "${item.name}" تلقائياً إلى مجلد التنزيلات! 📥`,
+        type: 'success',
+      });
+      setTimeout(() => setSaveNotification(null), 4000);
+    } catch (err) {
+      console.error('Anchor download error:', err);
+    }
+  };
+
   const getFileIcon = (mimeType: string) => {
     if (mimeType.startsWith('image/')) return <ImageIcon className="w-5 h-5 text-blue-500" />;
     if (mimeType.startsWith('video/')) return <Film className="w-5 h-5 text-purple-500" />;
@@ -167,11 +267,11 @@ export const TransferDashboard: React.FC<TransferDashboardProps> = ({
           </div>
           <div>
             <div className="flex items-center gap-2">
-              <span className="text-xs text-zinc-500 dark:text-zinc-400">Connected to</span>
-              <span className="w-1.5 h-1.5 rounded-full bg-emerald-500" />
+              <span className="text-xs text-zinc-500 dark:text-zinc-400">متصل بـ</span>
+              <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
             </div>
             <h2 className="text-base font-bold text-zinc-900 dark:text-zinc-100">
-              {peerDeviceInfo?.name || 'Connected Peer'}
+              {peerDeviceInfo?.name || 'الجهاز المقترن (Connected Peer)'}
             </h2>
           </div>
         </div>
@@ -182,12 +282,64 @@ export const TransferDashboard: React.FC<TransferDashboardProps> = ({
             type="checkbox"
             checked={autoAccept}
             onChange={(e) => onToggleAutoAccept(e.target.checked)}
-            className="w-4 h-4 rounded text-blue-600 focus:ring-blue-500 dark:bg-zinc-800 border-zinc-300 dark:border-zinc-700"
+            className="w-4 h-4 rounded text-blue-600 focus:ring-blue-500 dark:bg-zinc-800 border-zinc-300 dark:border-zinc-700 cursor-pointer"
             id="auto-accept-checkbox"
           />
-          <span>Auto-accept incoming files from this device</span>
+          <span className="font-medium">قبول وتنزيل الملفات تلقائياً (Auto-Accept)</span>
         </label>
       </div>
+
+      {/* Save Notification Toast */}
+      {saveNotification && (
+        <div className="p-4 rounded-xl bg-emerald-50 dark:bg-emerald-950/60 border border-emerald-200 dark:border-emerald-800 text-emerald-800 dark:text-emerald-200 text-xs sm:text-sm flex items-center justify-between shadow-md animate-in fade-in slide-in-from-top-2">
+          <div className="flex items-center gap-2.5">
+            <CheckCircle2 className="w-5 h-5 text-emerald-600 dark:text-emerald-400 shrink-0" />
+            <span className="font-medium">{saveNotification.message}</span>
+          </div>
+          <button
+            onClick={() => setSaveNotification(null)}
+            className="text-emerald-600 hover:text-emerald-800 p-1 cursor-pointer"
+          >
+            <X className="w-4 h-4" />
+          </button>
+        </div>
+      )}
+
+      {/* MOBILE HERO ACTION CARD (Fast One-Click File Selection) */}
+      {isMobile && (
+        <div className="p-5 rounded-2xl bg-gradient-to-r from-blue-600 via-indigo-600 to-purple-600 text-white shadow-xl space-y-3.5 border border-blue-400/30 animate-in fade-in slide-in-from-top-2">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-2">
+              <span className="w-2.5 h-2.5 rounded-full bg-emerald-400 animate-ping" />
+              <span className="text-xs font-bold uppercase tracking-wider text-blue-100">
+                اقتران ناجح بالكمبيوتر ⚡
+              </span>
+            </div>
+            <span className="text-xs font-semibold text-blue-100 bg-white/20 px-2.5 py-0.5 rounded-full">
+              {peerDeviceInfo?.name || 'الكمبيوتر'}
+            </span>
+          </div>
+
+          <div>
+            <h3 className="text-base sm:text-lg font-bold text-white">
+              اختر الملفات أو الصور لإرسالها فوراً إلى الكمبيوتر 📤
+            </h3>
+            <p className="text-xs text-blue-100 mt-1 leading-relaxed">
+              اضغط على الزر أدناه لاختيار الملفات من هاتفك؛ سيبدأ النقل المباشر والسريع تلقائياً دون أي خطوات إضافية!
+            </p>
+          </div>
+
+          <button
+            type="button"
+            onClick={() => fileInputRef.current?.click()}
+            className="w-full py-4 px-5 rounded-xl bg-white hover:bg-blue-50 active:scale-[0.99] text-blue-700 font-extrabold text-sm sm:text-base flex items-center justify-center gap-2.5 shadow-lg transition-all cursor-pointer"
+            id="mobile-instant-file-picker-btn"
+          >
+            <FolderUp className="w-5 h-5 text-blue-600 animate-bounce" />
+            <span>📁 فتح الاستوديو والملفات للإرسال الفوري ⚡</span>
+          </button>
+        </div>
+      )}
 
       {/* Incoming File Prompt Dialog */}
       {incomingOffer && !autoAccept && (
@@ -200,11 +352,11 @@ export const TransferDashboard: React.FC<TransferDashboardProps> = ({
               <div className="space-y-0.5">
                 <div className="flex items-center gap-1.5">
                   <span className="text-xs font-semibold uppercase tracking-wider text-blue-600 dark:text-blue-400">
-                    Incoming Transfer
+                    ملف وارد
                   </span>
                   <span className="text-xs text-zinc-400">•</span>
                   <span className="text-xs text-zinc-500 dark:text-zinc-400">
-                    from {peerDeviceInfo?.name || 'peer'}
+                    من {peerDeviceInfo?.name || 'peer'}
                   </span>
                 </div>
                 <div className="font-semibold text-sm text-zinc-900 dark:text-zinc-100 truncate max-w-sm">
@@ -219,112 +371,114 @@ export const TransferDashboard: React.FC<TransferDashboardProps> = ({
             <div className="flex items-center gap-2 self-end sm:self-center">
               <button
                 onClick={() => onRejectFile(incomingOffer.id)}
-                className="px-4 py-2 rounded-xl text-xs font-medium text-zinc-700 dark:text-zinc-300 hover:bg-zinc-200/60 dark:hover:bg-zinc-800 transition-colors"
-                id="reject-incoming-file-btn"
+                className="px-4 py-2 rounded-xl text-xs font-semibold text-zinc-600 dark:text-zinc-400 hover:bg-zinc-100 dark:hover:bg-zinc-800 transition-colors"
+                id="reject-file-btn"
               >
-                Decline
+                رفض
               </button>
               <button
                 onClick={() => onAcceptFile(incomingOffer)}
-                className="px-5 py-2 rounded-xl bg-blue-600 hover:bg-blue-700 text-white text-xs font-semibold shadow-sm transition-colors flex items-center gap-1.5"
-                id="accept-incoming-file-btn"
+                className="px-5 py-2 rounded-xl text-xs font-semibold bg-blue-600 hover:bg-blue-700 text-white shadow-xs transition-colors"
+                id="accept-file-btn"
               >
-                <Download className="w-3.5 h-3.5" />
-                <span>Accept & Download</span>
+                قبول واستلام
               </button>
             </div>
           </div>
         </div>
       )}
 
-      {/* Main SubTabs (Files vs Text) */}
-      <div className="flex items-center border-b border-zinc-200 dark:border-zinc-800 gap-6">
+      {/* SubTab Navigation */}
+      <div className="flex items-center gap-2 border-b border-zinc-200 dark:border-zinc-800 pb-2">
         <button
           onClick={() => setActiveSubTab('files')}
-          className={`pb-3 text-sm font-semibold transition-all relative ${
+          className={`px-4 py-2 rounded-xl text-xs font-semibold transition-colors flex items-center gap-2 ${
             activeSubTab === 'files'
-              ? 'text-blue-600 dark:text-blue-400'
-              : 'text-zinc-500 hover:text-zinc-800 dark:hover:text-zinc-200'
+              ? 'bg-zinc-900 text-white dark:bg-zinc-100 dark:text-zinc-900'
+              : 'text-zinc-600 dark:text-zinc-400 hover:bg-zinc-100 dark:hover:bg-zinc-800'
           }`}
-          id="tab-files-toggle"
         >
-          <span>Send Files & Media</span>
-          {activeSubTab === 'files' && (
-            <span className="absolute bottom-0 left-0 right-0 h-0.5 bg-blue-600 dark:bg-blue-400 rounded-full" />
-          )}
+          <File className="w-4 h-4" />
+          <span>الملفات ({files.length})</span>
         </button>
 
         <button
           onClick={() => setActiveSubTab('text')}
-          className={`pb-3 text-sm font-semibold transition-all relative flex items-center gap-1.5 ${
+          className={`px-4 py-2 rounded-xl text-xs font-semibold transition-colors flex items-center gap-2 ${
             activeSubTab === 'text'
-              ? 'text-blue-600 dark:text-blue-400'
-              : 'text-zinc-500 hover:text-zinc-800 dark:hover:text-zinc-200'
+              ? 'bg-zinc-900 text-white dark:bg-zinc-100 dark:text-zinc-900'
+              : 'text-zinc-600 dark:text-zinc-400 hover:bg-zinc-100 dark:hover:bg-zinc-800'
           }`}
-          id="tab-text-toggle"
         >
-          <span>Text & Links</span>
-          {texts.length > 0 && (
-            <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-blue-100 text-blue-700 dark:bg-blue-900/60 dark:text-blue-300 font-bold">
-              {texts.length}
-            </span>
-          )}
-          {activeSubTab === 'text' && (
-            <span className="absolute bottom-0 left-0 right-0 h-0.5 bg-blue-600 dark:bg-blue-400 rounded-full" />
-          )}
+          <Send className="w-4 h-4" />
+          <span>نصوص وروابط ({texts.length})</span>
         </button>
       </div>
 
       {/* SubTab Content: Files */}
       {activeSubTab === 'files' && (
         <div className="space-y-6">
-          {/* Dropzone Card */}
-          <div className="p-8 sm:p-12 rounded-2xl border-2 border-dashed border-zinc-300 dark:border-zinc-700 hover:border-blue-500 dark:hover:border-blue-500 bg-white dark:bg-zinc-900/50 text-center transition-colors">
+          {/* File Upload / Drop Area */}
+          <div
+            onClick={() => fileInputRef.current?.click()}
+            className="group relative border-2 border-dashed border-zinc-300 dark:border-zinc-700 hover:border-blue-500 dark:hover:border-blue-500 rounded-3xl p-8 sm:p-12 text-center bg-white dark:bg-zinc-900/60 hover:bg-blue-50/20 dark:hover:bg-blue-950/20 transition-all cursor-pointer shadow-2xs"
+          >
             <div className="max-w-md mx-auto space-y-4">
-              <div className="w-14 h-14 rounded-2xl bg-blue-50 dark:bg-blue-950/80 text-blue-600 dark:text-blue-400 mx-auto flex items-center justify-center shadow-xs">
-                <UploadCloud className="w-7 h-7" />
+              <div className="w-16 h-16 rounded-2xl bg-blue-50 dark:bg-blue-950/50 text-blue-600 dark:text-blue-400 mx-auto flex items-center justify-center border border-blue-100 dark:border-blue-900/60 group-hover:scale-105 transition-transform">
+                <UploadCloud className="w-8 h-8" />
               </div>
 
-              <div className="space-y-1">
+              <div>
                 <h3 className="text-base font-bold text-zinc-900 dark:text-zinc-100">
-                  Drop files here
+                  {isMobile ? 'اضغط لاختيار الصور والملفات' : 'اضغط لاختيار الملفات أو اسحبها هنا'}
                 </h3>
-                <p className="text-xs text-zinc-500 dark:text-zinc-400">
-                  Transfers directly over WebRTC without passing through cloud storage
+                <p className="text-xs text-zinc-500 dark:text-zinc-400 mt-1">
+                  إرسال مباشر ومشفر P2P عبر WebRTC بسرعة الشبكة المحلية الكاملة
                 </p>
               </div>
 
               {/* Action Buttons */}
-              <div className="pt-2 flex flex-wrap items-center justify-center gap-2">
-                {/* Select Files */}
+              <div className="flex flex-wrap items-center justify-center gap-2 pt-2" onClick={(e) => e.stopPropagation()}>
                 <button
                   onClick={() => fileInputRef.current?.click()}
-                  className="px-4 py-2.5 rounded-xl bg-blue-600 hover:bg-blue-700 text-white font-medium text-xs shadow-sm transition-colors flex items-center gap-1.5 focus:outline-none"
+                  className="px-4 py-2.5 rounded-xl bg-blue-600 hover:bg-blue-700 text-white font-medium text-xs shadow-sm transition-colors flex items-center gap-1.5 focus:outline-none cursor-pointer"
                   id="select-files-btn"
                 >
                   <File className="w-3.5 h-3.5" />
-                  <span>Select Files</span>
+                  <span>تحديد ملفات</span>
                 </button>
 
                 {/* Send Photos / Images */}
                 <button
                   onClick={() => imageInputRef.current?.click()}
-                  className="px-4 py-2.5 rounded-xl bg-zinc-100 dark:bg-zinc-800 hover:bg-zinc-200 dark:hover:bg-zinc-700 text-zinc-800 dark:text-zinc-200 font-medium text-xs border border-zinc-200 dark:border-zinc-700 transition-colors flex items-center gap-1.5 focus:outline-none"
+                  className="px-4 py-2.5 rounded-xl bg-zinc-100 dark:bg-zinc-800 hover:bg-zinc-200 dark:hover:bg-zinc-700 text-zinc-800 dark:text-zinc-200 font-medium text-xs border border-zinc-200 dark:border-zinc-700 transition-colors flex items-center gap-1.5 focus:outline-none cursor-pointer"
                   id="select-images-btn"
                 >
                   <ImageIcon className="w-3.5 h-3.5 text-blue-500" />
-                  <span>Photos</span>
+                  <span>صور وفيديوهات</span>
                 </button>
 
                 {/* Folder Upload where supported */}
                 {isFolderSupported && (
                   <button
                     onClick={() => folderInputRef.current?.click()}
-                    className="px-4 py-2.5 rounded-xl bg-zinc-100 dark:bg-zinc-800 hover:bg-zinc-200 dark:hover:bg-zinc-700 text-zinc-800 dark:text-zinc-200 font-medium text-xs border border-zinc-200 dark:border-zinc-700 transition-colors flex items-center gap-1.5 focus:outline-none"
+                    className="px-4 py-2.5 rounded-xl bg-zinc-100 dark:bg-zinc-800 hover:bg-zinc-200 dark:hover:bg-zinc-700 text-zinc-800 dark:text-zinc-200 font-medium text-xs border border-zinc-200 dark:border-zinc-700 transition-colors flex items-center gap-1.5 focus:outline-none cursor-pointer"
                     id="select-folder-btn"
                   >
                     <FolderUp className="w-3.5 h-3.5 text-amber-500" />
-                    <span>Folder</span>
+                    <span>مجلد كامل</span>
+                  </button>
+                )}
+
+                {/* Cloud Upload Fallback */}
+                {onUploadCloudFallback && (
+                  <button
+                    onClick={() => cloudFileInputRef.current?.click()}
+                    className="px-3.5 py-2.5 rounded-xl bg-purple-50 dark:bg-purple-950/40 hover:bg-purple-100 dark:hover:bg-purple-900/60 text-purple-700 dark:text-purple-300 font-medium text-xs border border-purple-200 dark:border-purple-800 transition-colors flex items-center gap-1.5 focus:outline-none cursor-pointer"
+                    title="رفع وتمرير الملف عبر Supabase Storage كبديل إذا تعذر P2P"
+                  >
+                    <CloudUpload className="w-3.5 h-3.5 text-purple-500" />
+                    <span>رفع سحابي (Cloud Relay)</span>
                   </button>
                 )}
               </div>
@@ -346,7 +500,7 @@ export const TransferDashboard: React.FC<TransferDashboardProps> = ({
                 ref={imageInputRef}
                 type="file"
                 multiple
-                accept="image/*"
+                accept="image/*,video/*"
                 className="hidden"
                 onChange={(e) => {
                   if (e.target.files && e.target.files.length > 0) {
@@ -371,6 +525,19 @@ export const TransferDashboard: React.FC<TransferDashboardProps> = ({
                   }}
                 />
               )}
+              {onUploadCloudFallback && (
+                <input
+                  ref={cloudFileInputRef}
+                  type="file"
+                  className="hidden"
+                  onChange={(e) => {
+                    if (e.target.files && e.target.files.length > 0) {
+                      onUploadCloudFallback(e.target.files[0]);
+                      e.target.value = '';
+                    }
+                  }}
+                />
+              )}
             </div>
           </div>
 
@@ -378,7 +545,7 @@ export const TransferDashboard: React.FC<TransferDashboardProps> = ({
           {files.length > 0 && (
             <div className="space-y-3">
               <h4 className="text-xs font-semibold uppercase tracking-wider text-zinc-500 dark:text-zinc-400">
-                Transfers ({files.length})
+                قائمة النقل والملفات ({files.length})
               </h4>
 
               <div className="space-y-2.5">
@@ -400,11 +567,11 @@ export const TransferDashboard: React.FC<TransferDashboardProps> = ({
                             </span>
                             {item.isIncoming ? (
                               <span className="inline-flex items-center gap-0.5 text-[10px] text-cyan-600 dark:text-cyan-400 font-medium">
-                                <ArrowDownLeft className="w-3 h-3" /> Received
+                                <ArrowDownLeft className="w-3 h-3" /> مستلم
                               </span>
                             ) : (
                               <span className="inline-flex items-center gap-0.5 text-[10px] text-blue-600 dark:text-blue-400 font-medium">
-                                <ArrowUpRight className="w-3 h-3" /> Sent
+                                <ArrowUpRight className="w-3 h-3" /> مرسل
                               </span>
                             )}
                           </div>
@@ -430,17 +597,32 @@ export const TransferDashboard: React.FC<TransferDashboardProps> = ({
                           <div className="flex items-center gap-2">
                             <span className="hidden sm:inline-flex items-center gap-1 text-xs text-emerald-600 dark:text-emerald-400 font-medium">
                               <CheckCircle2 className="w-4 h-4" />
-                              <span>Verified</span>
+                              <span>مكتمل</span>
                             </span>
+
+                            {/* File System Access API Save Button (Desktop Chromium) */}
+                            {hasFileSystemAccess && item.blobUrl && (
+                              <button
+                                type="button"
+                                onClick={() => handleSaveWithSystemPicker(item)}
+                                className="px-3 py-1.5 rounded-lg bg-blue-600 hover:bg-blue-700 text-white text-xs font-semibold flex items-center gap-1.5 shadow-xs transition-colors cursor-pointer"
+                                title="فتح نافذة مستكشف الملفات لتحديد مجلد واسم الحفظ (Save As...)"
+                              >
+                                <HardDrive className="w-3.5 h-3.5" />
+                                <span>حفظ في مجلد (Save As)</span>
+                              </button>
+                            )}
+
+                            {/* Direct Download Button */}
                             {item.blobUrl && (
-                              <a
-                                href={item.blobUrl}
-                                download={item.name}
-                                className="px-3 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-medium flex items-center gap-1 shadow-xs transition-colors"
+                              <button
+                                type="button"
+                                onClick={() => triggerAnchorDownload(item)}
+                                className="px-3 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-medium flex items-center gap-1 shadow-xs transition-colors cursor-pointer"
                               >
                                 <Download className="w-3 h-3" />
-                                <span>Save</span>
-                              </a>
+                                <span>{hasFileSystemAccess ? 'تنزيل عادي' : 'حفظ'}</span>
+                              </button>
                             )}
                           </div>
                         )}
@@ -448,8 +630,8 @@ export const TransferDashboard: React.FC<TransferDashboardProps> = ({
                         {item.state === 'transferring' && (
                           <button
                             onClick={() => onCancelTransfer(item.id)}
-                            className="p-1.5 rounded-lg text-zinc-400 hover:text-rose-600 hover:bg-rose-50 dark:hover:bg-rose-950/40 transition-colors"
-                            title="Cancel Transfer"
+                            className="p-1.5 rounded-lg text-zinc-400 hover:text-rose-600 hover:bg-rose-50 dark:hover:bg-rose-950/40 transition-colors cursor-pointer"
+                            title="إلغاء النقل"
                           >
                             <X className="w-4 h-4" />
                           </button>
@@ -458,16 +640,16 @@ export const TransferDashboard: React.FC<TransferDashboardProps> = ({
                         {item.state === 'failed' && (
                           <span className="inline-flex items-center gap-1 text-xs text-rose-600 dark:text-rose-400 font-medium">
                             <AlertCircle className="w-3.5 h-3.5" />
-                            <span>Failed</span>
+                            <span>فشل</span>
                           </span>
                         )}
 
                         {item.state === 'cancelled' && (
-                          <span className="text-xs text-zinc-500">Cancelled</span>
+                          <span className="text-xs text-zinc-500">تم الإلغاء</span>
                         )}
 
                         {item.state === 'verifying' && (
-                          <span className="text-xs text-amber-500 animate-pulse">Verifying hash...</span>
+                          <span className="text-xs text-amber-500 animate-pulse">فحص التطابق...</span>
                         )}
                       </div>
                     </div>
@@ -509,12 +691,12 @@ export const TransferDashboard: React.FC<TransferDashboardProps> = ({
           {/* Text Compose Card */}
           <form onSubmit={handleTextSubmit} className="p-4 rounded-2xl bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 shadow-xs space-y-3">
             <label className="block text-xs font-semibold uppercase tracking-wider text-zinc-500 dark:text-zinc-400">
-              Send Text, Code, or URL
+              إرسال نص، كود، أو رابط
             </label>
             <textarea
               value={textInput}
               onChange={(e) => setTextInput(e.target.value)}
-              placeholder="Paste anything here: notes, links, code snippets..."
+              placeholder="ألصق أي نص هنا: ملاحظات، روابط، أكواد..."
               rows={3}
               className="w-full p-3 rounded-xl bg-zinc-50 dark:bg-zinc-950 border border-zinc-200 dark:border-zinc-800 text-sm text-zinc-900 dark:text-zinc-100 placeholder-zinc-400 focus:outline-none focus:ring-2 focus:ring-blue-500 resize-none font-sans"
               id="text-message-textarea"
@@ -524,20 +706,20 @@ export const TransferDashboard: React.FC<TransferDashboardProps> = ({
               {isValidUrl(textInput) ? (
                 <div className="flex items-center gap-1 text-xs text-blue-600 dark:text-blue-400 font-medium">
                   <LinkIcon className="w-3.5 h-3.5" />
-                  <span>Valid Link detected</span>
+                  <span>تم اكتشاف رابط صالح</span>
                 </div>
               ) : (
-                <span className="text-xs text-zinc-400">Instant direct transfer</span>
+                <span className="text-xs text-zinc-400">نقل مباشر فوري</span>
               )}
 
               <button
                 type="submit"
                 disabled={!textInput.trim()}
-                className="px-4 py-2 rounded-xl bg-blue-600 hover:bg-blue-700 text-white font-semibold text-xs shadow-sm transition-colors flex items-center gap-1.5 disabled:opacity-50 disabled:cursor-not-allowed"
+                className="px-4 py-2 rounded-xl bg-blue-600 hover:bg-blue-700 text-white font-semibold text-xs shadow-sm transition-colors flex items-center gap-1.5 disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer"
                 id="send-text-btn"
               >
                 <Send className="w-3.5 h-3.5" />
-                <span>Send</span>
+                <span>إرسال</span>
               </button>
             </div>
           </form>
@@ -545,12 +727,12 @@ export const TransferDashboard: React.FC<TransferDashboardProps> = ({
           {/* Texts Stream */}
           <div className="space-y-3">
             <h4 className="text-xs font-semibold uppercase tracking-wider text-zinc-500 dark:text-zinc-400">
-              Shared Texts ({texts.length})
+              النصوص المشتركة ({texts.length})
             </h4>
 
             {texts.length === 0 ? (
               <div className="p-8 text-center rounded-xl bg-zinc-50 dark:bg-zinc-900/40 border border-zinc-200 dark:border-zinc-800 text-xs text-zinc-500">
-                No text messages sent or received in this session yet.
+                لم يتم إرسال أو استلام أي رسائل نصية في هذه الجلسة بعد.
               </div>
             ) : (
               <div className="space-y-2.5">
@@ -562,9 +744,9 @@ export const TransferDashboard: React.FC<TransferDashboardProps> = ({
                     <div className="flex items-center justify-between text-xs text-zinc-500">
                       <span className="font-medium text-zinc-700 dark:text-zinc-300">
                         {item.isIncoming ? (
-                          <span className="text-cyan-600 dark:text-cyan-400">Received from {peerDeviceInfo?.name || 'peer'}</span>
+                          <span className="text-cyan-600 dark:text-cyan-400">مستلم من {peerDeviceInfo?.name || 'peer'}</span>
                         ) : (
-                          <span className="text-blue-600 dark:text-blue-400">Sent by this device</span>
+                          <span className="text-blue-600 dark:text-blue-400">مرسل من هذا الجهاز</span>
                         )}
                       </span>
                       <span>{new Date(item.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>
@@ -583,23 +765,23 @@ export const TransferDashboard: React.FC<TransferDashboardProps> = ({
                           className="px-3 py-1.5 rounded-lg bg-blue-50 dark:bg-blue-950/60 hover:bg-blue-100 dark:hover:bg-blue-900 text-blue-700 dark:text-blue-300 text-xs font-medium flex items-center gap-1 transition-colors"
                         >
                           <ExternalLink className="w-3 h-3" />
-                          <span>Open Link</span>
+                          <span>فتح الرابط</span>
                         </a>
                       )}
 
                       <button
                         onClick={() => handleCopyText(item.id, item.text)}
-                        className="px-3 py-1.5 rounded-lg bg-zinc-100 dark:bg-zinc-800 hover:bg-zinc-200 dark:hover:bg-zinc-700 text-zinc-700 dark:text-zinc-300 text-xs font-medium flex items-center gap-1 transition-colors"
+                        className="px-3 py-1.5 rounded-lg bg-zinc-100 dark:bg-zinc-800 hover:bg-zinc-200 dark:hover:bg-zinc-700 text-zinc-700 dark:text-zinc-300 text-xs font-medium flex items-center gap-1 transition-colors cursor-pointer"
                       >
                         {copiedTextId === item.id ? (
                           <>
                             <Check className="w-3 h-3 text-emerald-500" />
-                            <span>Copied</span>
+                            <span>تم النسخ</span>
                           </>
                         ) : (
                           <>
                             <Copy className="w-3 h-3" />
-                            <span>Copy</span>
+                            <span>نسخ</span>
                           </>
                         )}
                       </button>

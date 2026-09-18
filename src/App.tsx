@@ -27,6 +27,7 @@ import { getLocalDeviceInfo } from './lib/device.ts';
 import { SignalingClient } from './lib/signaling.ts';
 import { WebRTCManager } from './lib/webrtc.ts';
 import { getActiveUser, signOutUser } from './lib/auth.ts';
+import { SupabaseService } from './lib/supabase-service.ts';
 
 export default function App() {
   const [currentTab, setCurrentTab] = useState<AppTab>('transfer');
@@ -58,7 +59,9 @@ export default function App() {
   const [texts, setTexts] = useState<TextTransferItem[]>([]);
   const [incomingOffer, setIncomingOffer] = useState<FileTransferItem | null>(null);
   const [autoAccept, setAutoAccept] = useState<boolean>(() => {
-    return localStorage.getItem('quickdrop_auto_accept') === 'true';
+    const saved = localStorage.getItem('quickdrop_auto_accept');
+    // Default to true for zero-friction transfers
+    return saved !== null ? saved === 'true' : true;
   });
 
   const signalingClientRef = useRef<SignalingClient | null>(null);
@@ -143,6 +146,56 @@ export default function App() {
       .catch((err) => console.warn('Failed to fetch ICE servers:', err));
   }, []);
 
+  // Auto-Save received file on Desktop using File System Access API or Anchor fallback
+  const autoSaveReceivedFile = useCallback(async (item: FileTransferItem) => {
+    if (!item.blobUrl) return;
+
+    // 1. Check if File System Access API is supported (Chromium Desktop)
+    if (typeof window !== 'undefined' && 'showSaveFilePicker' in window) {
+      try {
+        const ext = item.name.includes('.') ? '.' + item.name.split('.').pop() : '';
+        const handle = await (window as any).showSaveFilePicker({
+          suggestedName: item.name,
+          types: [
+            {
+              description: 'QuickDrop Received File',
+              accept: {
+                [item.type || 'application/octet-stream']: ext ? [ext] : [],
+              },
+            },
+          ],
+        });
+
+        const writable = await handle.createWritable();
+        const resp = await fetch(item.blobUrl);
+        const blob = await resp.blob();
+        await writable.write(blob);
+        await writable.close();
+        return;
+      } catch (err: any) {
+        if (err.name === 'AbortError') {
+          // User deliberately cancelled the file picker dialog
+          return;
+        }
+        // If security restrictions blocked showing picker without synchronous user gesture,
+        // fall back smoothly to the automated anchor blob download
+        console.warn('showSaveFilePicker restricted without user gesture, falling back to direct download:', err);
+      }
+    }
+
+    // 2. Direct automated anchor download fallback
+    try {
+      const a = document.createElement('a');
+      a.href = item.blobUrl;
+      a.download = item.name;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+    } catch (err) {
+      console.error('Anchor download error:', err);
+    }
+  }, []);
+
   // Initialize or recreate WebRTC Manager
   const getOrCreateWebRTC = useCallback((isInitiator: boolean) => {
     if (webrtcManagerRef.current) {
@@ -188,17 +241,31 @@ export default function App() {
             setIncomingOffer(item);
           }
           setFiles((prev) => [item, ...prev.filter((f) => f.id !== item.id)]);
+
+          if (session?.sessionId) {
+            SupabaseService.recordTransfer(item, session.sessionId, 'webrtc_p2p').catch(() => {});
+          }
         },
         onFileProgress: (item) => {
           setFiles((prev) =>
             prev.map((f) => (f.id === item.id ? { ...item } : f))
           );
         },
-        onFileCompleted: (item) => {
+        onFileCompleted: async (item) => {
           setIncomingOffer((current) => (current?.id === item.id ? null : current));
           setFiles((prev) =>
             prev.map((f) => (f.id === item.id ? { ...item } : f))
           );
+
+          // Record transfer in Supabase Database
+          if (session?.sessionId) {
+            SupabaseService.recordTransfer(item, session.sessionId, 'webrtc_p2p').catch(() => {});
+          }
+
+          // Automatically trigger File System Access API or anchor download on receiver
+          if (item.isIncoming && item.blobUrl) {
+            await autoSaveReceivedFile(item);
+          }
         },
         onFileFailed: (itemId, error) => {
           setIncomingOffer((current) => (current?.id === itemId ? null : current));
@@ -214,7 +281,7 @@ export default function App() {
 
     webrtcManagerRef.current = manager;
     return manager;
-  }, [localDeviceInfo, autoAccept, connectionState]);
+  }, [localDeviceInfo, autoAccept, connectionState, session, autoSaveReceivedFile]);
 
   // Create a new Session (Host)
   const handleStartSession = async () => {
@@ -263,13 +330,19 @@ export default function App() {
         sessionStorage.setItem('quickdrop_active_host_session', JSON.stringify(newSession));
       } catch {}
 
-      // Connect signaling client
+      // Record in Supabase DB
+      SupabaseService.recordSession(newSession, localDeviceInfo);
+
+      // Connect signaling client (Supabase Realtime Channel + WebSocket dual relay)
       const signaling = new SignalingClient({
         onRegistered: () => {
           setConnectionState('waiting');
         },
         onPeerJoined: async (peerInfo) => {
-          if (peerInfo) setPeerDeviceInfo(peerInfo);
+          if (peerInfo) {
+            setPeerDeviceInfo(peerInfo);
+            SupabaseService.updateSessionPeer(newSession.sessionId, peerInfo, 'connected');
+          }
           setConnectionState('connecting');
 
           // Host creates offer
@@ -290,6 +363,44 @@ export default function App() {
             await webrtcManagerRef.current.handleReceivedIceCandidate(candidate);
           } else {
             pendingCandidatesRef.current.push(candidate);
+          }
+        },
+        onCloudTransferOffer: async (offer) => {
+          const item: FileTransferItem = {
+            id: offer.id,
+            name: offer.name,
+            size: offer.size,
+            type: offer.type,
+            lastModified: Date.now(),
+            progress: 30,
+            transferredBytes: Math.round(offer.size * 0.3),
+            speed: 0,
+            eta: 0,
+            state: 'transferring',
+            isIncoming: true,
+          };
+          setFiles((prev) => [item, ...prev.filter((f) => f.id !== item.id)]);
+
+          try {
+            const res = await fetch(offer.url);
+            const blob = await res.blob();
+            const blobUrl = URL.createObjectURL(blob);
+            const completedItem: FileTransferItem = {
+              ...item,
+              progress: 100,
+              transferredBytes: offer.size,
+              state: 'completed',
+              blobUrl,
+              endTime: Date.now(),
+            };
+            setFiles((prev) => prev.map((f) => (f.id === offer.id ? completedItem : f)));
+
+            SupabaseService.recordTransfer(completedItem, newSession.sessionId, 'supabase_storage').catch(() => {});
+            await autoSaveReceivedFile(completedItem);
+          } catch (err: any) {
+            setFiles((prev) =>
+              prev.map((f) => (f.id === offer.id ? { ...f, state: 'failed', error: err.message } : f))
+            );
           }
         },
         onPeerDisconnected: () => {
@@ -322,14 +433,14 @@ export default function App() {
     }
   };
 
-  // Join an existing Session (Joiner)
+  // Join an existing Session (Joiner / Mobile)
   const handleJoinSession = async (tokenOrCode: string, optionalToken?: string) => {
     setConnectionState('connecting');
 
     try {
       let targetSessionId = '';
-      let targetToken = optionalToken || tokenOrCode;
-      let targetExpires = Date.now() + 15 * 60 * 1000;
+      const targetToken = optionalToken || tokenOrCode;
+      const targetExpires = Date.now() + 15 * 60 * 1000;
 
       const qkMatch = tokenOrCode.match(/QK-[A-Z0-9]{4}-[A-Z0-9]{4}/i);
       if (qkMatch) {
@@ -350,6 +461,9 @@ export default function App() {
       setSession(joinSessionData);
       setIsScannerOpen(false);
       setIsManualJoinOpen(false);
+
+      // Record join in Supabase DB
+      SupabaseService.updateSessionPeer(targetSessionId, localDeviceInfo, 'connected');
 
       const signaling = new SignalingClient({
         onJoined: (_sid, hostInfo) => {
@@ -373,6 +487,44 @@ export default function App() {
             await webrtcManagerRef.current.handleReceivedIceCandidate(candidate);
           } else {
             pendingCandidatesRef.current.push(candidate);
+          }
+        },
+        onCloudTransferOffer: async (offer) => {
+          const item: FileTransferItem = {
+            id: offer.id,
+            name: offer.name,
+            size: offer.size,
+            type: offer.type,
+            lastModified: Date.now(),
+            progress: 30,
+            transferredBytes: Math.round(offer.size * 0.3),
+            speed: 0,
+            eta: 0,
+            state: 'transferring',
+            isIncoming: true,
+          };
+          setFiles((prev) => [item, ...prev.filter((f) => f.id !== item.id)]);
+
+          try {
+            const res = await fetch(offer.url);
+            const blob = await res.blob();
+            const blobUrl = URL.createObjectURL(blob);
+            const completedItem: FileTransferItem = {
+              ...item,
+              progress: 100,
+              transferredBytes: offer.size,
+              state: 'completed',
+              blobUrl,
+              endTime: Date.now(),
+            };
+            setFiles((prev) => prev.map((f) => (f.id === offer.id ? completedItem : f)));
+
+            SupabaseService.recordTransfer(completedItem, targetSessionId, 'supabase_storage').catch(() => {});
+            await autoSaveReceivedFile(completedItem);
+          } catch (err: any) {
+            setFiles((prev) =>
+              prev.map((f) => (f.id === offer.id ? { ...f, state: 'failed', error: err.message } : f))
+            );
           }
         },
         onPeerDisconnected: () => {
@@ -426,7 +578,10 @@ export default function App() {
             const signaling = new SignalingClient({
               onRegistered: () => setConnectionState('waiting'),
               onPeerJoined: async (peerInfo) => {
-                if (peerInfo) setPeerDeviceInfo(peerInfo);
+                if (peerInfo) {
+                  setPeerDeviceInfo(peerInfo);
+                  SupabaseService.updateSessionPeer(sessionObj.sessionId, peerInfo, 'connected');
+                }
                 setConnectionState('connecting');
                 const rtc = getOrCreateWebRTC(true);
                 await rtc.initializePeerConnection(true);
@@ -443,6 +598,42 @@ export default function App() {
                   await webrtcManagerRef.current.handleReceivedIceCandidate(candidate);
                 } else {
                   pendingCandidatesRef.current.push(candidate);
+                }
+              },
+              onCloudTransferOffer: async (offer) => {
+                const item: FileTransferItem = {
+                  id: offer.id,
+                  name: offer.name,
+                  size: offer.size,
+                  type: offer.type,
+                  lastModified: Date.now(),
+                  progress: 30,
+                  transferredBytes: Math.round(offer.size * 0.3),
+                  speed: 0,
+                  eta: 0,
+                  state: 'transferring',
+                  isIncoming: true,
+                };
+                setFiles((prev) => [item, ...prev.filter((f) => f.id !== item.id)]);
+
+                try {
+                  const res = await fetch(offer.url);
+                  const blob = await res.blob();
+                  const blobUrl = URL.createObjectURL(blob);
+                  const completedItem: FileTransferItem = {
+                    ...item,
+                    progress: 100,
+                    transferredBytes: offer.size,
+                    state: 'completed',
+                    blobUrl,
+                    endTime: Date.now(),
+                  };
+                  setFiles((prev) => prev.map((f) => (f.id === offer.id ? completedItem : f)));
+                  await autoSaveReceivedFile(completedItem);
+                } catch (err: any) {
+                  setFiles((prev) =>
+                    prev.map((f) => (f.id === offer.id ? { ...f, state: 'failed', error: err.message } : f))
+                  );
                 }
               },
               onPeerDisconnected: () => setConnectionState('disconnected'),
@@ -467,6 +658,10 @@ export default function App() {
 
   // End active session
   const handleEndSession = () => {
+    if (session?.sessionId) {
+      SupabaseService.updateSessionPeer(session.sessionId, localDeviceInfo, 'expired');
+    }
+
     try {
       sessionStorage.removeItem('quickdrop_active_host_session');
     } catch {}
@@ -488,13 +683,87 @@ export default function App() {
     }
   };
 
-  // Send Files
+  // Send Files via P2P WebRTC
   const handleSendFiles = (fileList: FileList | File[]) => {
     if (!webrtcManagerRef.current) return;
     const filesArray = Array.from(fileList);
     for (const file of filesArray) {
       const item = webrtcManagerRef.current.offerFileToSend(file);
       setFiles((prev) => [item, ...prev]);
+
+      if (session?.sessionId) {
+        SupabaseService.recordTransfer(item, session.sessionId, 'webrtc_p2p').catch(() => {});
+      }
+    }
+  };
+
+  // Cloud Upload Fallback (Supabase Storage)
+  const handleCloudUploadFallback = async (file: File) => {
+    if (!session?.sessionId) return;
+    const tempId = `cloud-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`;
+    const cloudItem: FileTransferItem = {
+      id: tempId,
+      name: file.name,
+      size: file.size,
+      type: file.type || 'application/octet-stream',
+      lastModified: file.lastModified,
+      progress: 15,
+      transferredBytes: Math.round(file.size * 0.15),
+      speed: 0,
+      eta: 0,
+      state: 'transferring',
+      isIncoming: false,
+    };
+
+    setFiles((prev) => [cloudItem, ...prev]);
+
+    const res = await SupabaseService.uploadToStorageFallback(file, session.sessionId, (pct) => {
+      setFiles((prev) =>
+        prev.map((f) =>
+          f.id === tempId
+            ? {
+                ...f,
+                progress: pct,
+                transferredBytes: Math.round((pct / 100) * file.size),
+              }
+            : f
+        )
+      );
+    });
+
+    if (res.success && res.url) {
+      const completedItem: FileTransferItem = {
+        ...cloudItem,
+        progress: 100,
+        transferredBytes: file.size,
+        state: 'completed',
+        blobUrl: res.url,
+        endTime: Date.now(),
+      };
+      setFiles((prev) => prev.map((f) => (f.id === tempId ? completedItem : f)));
+
+      // Broadcast cloud transfer offer to receiver via signaling
+      signalingClientRef.current?.sendCloudTransferOffer({
+        id: tempId,
+        name: file.name,
+        size: file.size,
+        type: file.type,
+        url: res.url,
+      });
+
+      SupabaseService.recordTransfer(completedItem, session.sessionId, 'supabase_storage', res.path).catch(() => {});
+    } else {
+      setFiles((prev) =>
+        prev.map((f) =>
+          f.id === tempId
+            ? {
+                ...f,
+                state: 'failed',
+                error: res.error || 'فشل الرفع إلى Supabase Storage',
+              }
+            : f
+        )
+      );
     }
   };
 
@@ -651,6 +920,8 @@ export default function App() {
                 onCancelTransfer={handleCancelTransfer}
                 autoAccept={autoAccept}
                 onToggleAutoAccept={handleToggleAutoAccept}
+                sessionRole={session?.role}
+                onUploadCloudFallback={handleCloudUploadFallback}
               />
             )}
 
@@ -668,7 +939,7 @@ export default function App() {
                 </p>
                 <button
                   onClick={handleEndSession}
-                  className="px-5 py-2.5 rounded-xl bg-blue-600 hover:bg-blue-700 text-white font-medium text-xs shadow-sm transition-colors"
+                  className="px-5 py-2.5 rounded-xl bg-blue-600 hover:bg-blue-700 text-white font-medium text-xs shadow-sm transition-colors cursor-pointer"
                   id="restart-after-disconnect-btn"
                 >
                   Start New Session

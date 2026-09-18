@@ -1,4 +1,5 @@
 import { DeviceInfo } from '../types.ts';
+import { SupabaseService } from './supabase-service.ts';
 
 export interface SignalingCallbacks {
   onRegistered?: (sessionId: string, expiresAt: number) => void;
@@ -7,6 +8,7 @@ export interface SignalingCallbacks {
   onOffer?: (sdp: RTCSessionDescriptionInit) => void;
   onAnswer?: (sdp: RTCSessionDescriptionInit) => void;
   onIceCandidate?: (candidate: RTCIceCandidateInit) => void;
+  onCloudTransferOffer?: (offer: { id: string; name: string; size: number; type: string; url: string }) => void;
   onPeerDisconnected?: () => void;
   onPeerLeft?: () => void;
   onSessionExpired?: (reason?: string) => void;
@@ -27,6 +29,7 @@ export class SignalingClient {
   private safeTopic = '';
   private localDeviceInfo?: DeviceInfo;
   private isConnected = false;
+  private seenMessages = new Set<string>();
 
   constructor(callbacks: SignalingCallbacks) {
     this.callbacks = callbacks;
@@ -34,6 +37,8 @@ export class SignalingClient {
 
   /**
    * Connect to signaling relay for a given session ID
+   * Uses Supabase Realtime Channels as high-priority low-latency transport,
+   * with fallback to WebSocket / ntfy relay for resilience.
    */
   public async connect(sessionId: string, role: 'host' | 'joiner'): Promise<void> {
     this.isExplicitlyClosed = false;
@@ -41,6 +46,12 @@ export class SignalingClient {
     this.sessionId = sessionId;
     this.safeTopic = 'quickdrop-' + sessionId.toLowerCase().replace(/[^a-z0-9]/g, '');
 
+    // 1. Subscribe to Supabase Realtime Channel
+    SupabaseService.subscribeToSignalingChannel(this.safeTopic, (payload) => {
+      this.handleRelayMessage(payload);
+    });
+
+    // 2. Parallel WebSocket fallback connection
     return new Promise((resolve) => {
       try {
         const wsUrl = CUSTOM_SIGNALING_URL
@@ -107,6 +118,15 @@ export class SignalingClient {
     if (!msg || typeof msg !== 'object') return;
     if (msg.sender === this.role) return;
 
+    // Deduplication check across dual transport (Supabase Realtime & WebSocket)
+    const msgKey = `${msg.type}_${msg.sender}_${msg.timestamp || ''}_${JSON.stringify(msg.sdp || msg.candidate || msg.sessionId || msg.offer?.id || '')}`;
+    if (this.seenMessages.has(msgKey)) return;
+    this.seenMessages.add(msgKey);
+    if (this.seenMessages.size > 200) {
+      const first = this.seenMessages.values().next().value;
+      if (first) this.seenMessages.delete(first);
+    }
+
     switch (msg.type) {
       case 'join_session':
         if (this.role === 'host') {
@@ -142,6 +162,12 @@ export class SignalingClient {
       case 'ice_candidate':
         if (msg.candidate) {
           this.callbacks.onIceCandidate?.(msg.candidate);
+        }
+        break;
+
+      case 'cloud_transfer_offer':
+        if (msg.offer) {
+          this.callbacks.onCloudTransferOffer?.(msg.offer);
         }
         break;
 
@@ -230,6 +256,13 @@ export class SignalingClient {
     });
   }
 
+  public sendCloudTransferOffer(offer: { id: string; name: string; size: number; type: string; url: string }) {
+    this.send({
+      type: 'cloud_transfer_offer',
+      offer,
+    });
+  }
+
   public leave() {
     this.send({ type: 'peer_left' });
     this.close();
@@ -237,13 +270,18 @@ export class SignalingClient {
 
   private async send(payload: any) {
     if (!this.safeTopic) return;
-    const body = JSON.stringify({
+    const msg = {
       ...payload,
       sender: this.role,
       timestamp: Date.now(),
-    });
+    };
 
+    // 1. Broadcast via Supabase Realtime
+    SupabaseService.broadcastSignal(this.safeTopic, msg).catch(() => {});
+
+    // 2. Parallel HTTP POST to WebSocket relay endpoint
     try {
+      const body = JSON.stringify(msg);
       const endpoint = CUSTOM_SIGNALING_URL
         ? (CUSTOM_SIGNALING_URL.replace(/^ws/i, 'http').replace(/\/+$/, '') + '/' + this.safeTopic)
         : `https://ntfy.sh/${this.safeTopic}`;
@@ -276,6 +314,7 @@ export class SignalingClient {
     this.isExplicitlyClosed = true;
     this.stopHeartbeat();
     this.stopRetry();
+    SupabaseService.unsubscribeSignalingChannel(this.safeTopic);
     if (this.ws) {
       try {
         this.ws.close();

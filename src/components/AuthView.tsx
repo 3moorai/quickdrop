@@ -135,6 +135,34 @@ export const AuthView: React.FC<AuthViewProps> = ({ onAuthSuccess }) => {
     onAuthSuccess(fallbackUser);
   };
 
+  // Check if user arrived via QR Code scan with join/code parameters
+  const [incomingPairCode, setIncomingPairCode] = useState<string | null>(null);
+  useEffect(() => {
+    try {
+      const params = new URLSearchParams(window.location.search);
+      const code = params.get('code');
+      const join = params.get('join');
+      if (code || join) {
+        setIncomingPairCode(code || join);
+      }
+    } catch {}
+  }, []);
+
+  const handleQuickGuestPair = () => {
+    const guestUser: UserProfile = {
+      id: 'guest_mobile_' + Math.random().toString(36).substring(2, 9),
+      email: 'mobile@quickdrop.local',
+      name: 'هاتف محمول (Mobile)',
+      deviceName: 'هاتف محمول (Sender)',
+      createdAt: new Date().toISOString(),
+      emailConfirmed: true,
+    };
+    try {
+      localStorage.setItem('quickdrop_current_user_session', JSON.stringify(guestUser));
+    } catch {}
+    onAuthSuccess(guestUser);
+  };
+
   // Timer countdown effect for OTP resend
   useEffect(() => {
     if (resendCooldown <= 0) return;
@@ -396,6 +424,32 @@ export const AuthView: React.FC<AuthViewProps> = ({ onAuthSuccess }) => {
           <div className="p-3.5 rounded-xl bg-emerald-50 dark:bg-emerald-950/50 border border-emerald-200 dark:border-emerald-900/60 text-xs text-emerald-700 dark:text-emerald-300 flex items-start gap-2.5">
             <CheckCircle2 className="w-4 h-4 shrink-0 mt-0.5" />
             <span className="leading-relaxed">{successMessage}</span>
+          </div>
+        )}
+
+        {/* QR CODE INSTANT MOBILE PAIRING BANNER */}
+        {incomingPairCode && mode !== 'verify' && (
+          <div className="p-4 rounded-2xl bg-gradient-to-br from-blue-600 to-indigo-600 text-white shadow-lg space-y-3 border border-blue-400/30">
+            <div className="flex items-center justify-between">
+              <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full bg-white/20 text-[11px] font-bold uppercase tracking-wider text-blue-100">
+                <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
+                اقتران سريع عبر QR Code
+              </span>
+              <span className="font-mono text-xs font-semibold text-blue-100 bg-blue-900/40 px-2 py-0.5 rounded">
+                {incomingPairCode}
+              </span>
+            </div>
+            <p className="text-xs text-blue-100 leading-relaxed">
+              تم اكتشاف جلسة نقل ملفات جاهزة من الكمبيوتر. اضغط الزر أدناه للمتابعة كجهاز مرسل والاقتران فوراً دون تسجيل دخول:
+            </p>
+            <button
+              type="button"
+              onClick={handleQuickGuestPair}
+              className="w-full py-3 px-4 rounded-xl bg-white hover:bg-blue-50 active:scale-[0.99] text-blue-700 font-bold text-sm flex items-center justify-center gap-2 shadow-md transition-all cursor-pointer"
+            >
+              <span>📱 متابعة كجهاز مرسل والاقتران فوراً ⚡</span>
+              <ArrowRight className="w-4 h-4" />
+            </button>
           </div>
         )}
 

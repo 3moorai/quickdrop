@@ -821,7 +821,9 @@ import {
   FolderUp,
   ShieldCheck as ShieldCheck3,
   ArrowUpRight,
-  ArrowDownLeft
+  ArrowDownLeft,
+  CloudUpload,
+  HardDrive
 } from "lucide-react";
 
 // src/lib/crypto.ts
@@ -909,16 +911,38 @@ var TransferDashboard = ({
   onRejectFile,
   onCancelTransfer,
   autoAccept,
-  onToggleAutoAccept
+  onToggleAutoAccept,
+  sessionRole = "host",
+  onUploadCloudFallback
 }) => {
   const fileInputRef = useRef3(null);
   const imageInputRef = useRef3(null);
   const folderInputRef = useRef3(null);
+  const cloudFileInputRef = useRef3(null);
   const [isDraggingOver, setIsDraggingOver] = useState4(false);
   const [textInput, setTextInput] = useState4("");
   const [activeSubTab, setActiveSubTab] = useState4("files");
   const [copiedTextId, setCopiedTextId] = useState4(null);
+  const [saveNotification, setSaveNotification] = useState4(null);
+  const [hasAttemptedMobileAutoPick, setHasAttemptedMobileAutoPick] = useState4(false);
+  const isMobile = localDeviceInfo.type === "mobile" || typeof navigator !== "undefined" && /android|iphone|ipad|ipod|mobile/i.test(navigator.userAgent);
+  const hasFileSystemAccess = typeof window !== "undefined" && "showSaveFilePicker" in window;
   const isFolderSupported = typeof window !== "undefined" && "webkitdirectory" in document.createElement("input");
+  useEffect3(() => {
+    if (isMobile && !hasAttemptedMobileAutoPick && files.length === 0) {
+      setHasAttemptedMobileAutoPick(true);
+      try {
+        if (fileInputRef.current) {
+          if ("showPicker" in fileInputRef.current) {
+            fileInputRef.current.showPicker();
+          } else {
+            fileInputRef.current.click();
+          }
+        }
+      } catch {
+      }
+    }
+  }, [isMobile, hasAttemptedMobileAutoPick, files.length]);
   useEffect3(() => {
     let dragCounter = 0;
     const handleDragEnter = (e) => {
@@ -971,6 +995,61 @@ var TransferDashboard = ({
     } catch {
     }
   };
+  const handleSaveWithSystemPicker = async (item) => {
+    if (!item.blobUrl) return;
+    if (!hasFileSystemAccess) {
+      triggerAnchorDownload(item);
+      return;
+    }
+    try {
+      const ext = item.name.includes(".") ? "." + item.name.split(".").pop() : "";
+      const handle = await window.showSaveFilePicker({
+        suggestedName: item.name,
+        types: [
+          {
+            description: "QuickDrop Received File",
+            accept: {
+              [item.type || "application/octet-stream"]: ext ? [ext] : []
+            }
+          }
+        ]
+      });
+      const writable = await handle.createWritable();
+      const response = await fetch(item.blobUrl);
+      const blob = await response.blob();
+      await writable.write(blob);
+      await writable.close();
+      setSaveNotification({
+        message: `\u062A\u0645 \u062D\u0641\u0638 "${item.name}" \u0628\u0646\u062C\u0627\u062D \u0641\u064A \u0627\u0644\u0645\u0633\u0627\u0631 \u0627\u0644\u0630\u064A \u062D\u062F\u062F\u062A\u0647! \u2705`,
+        type: "success"
+      });
+      setTimeout(() => setSaveNotification(null), 4e3);
+    } catch (err) {
+      if (err.name === "AbortError") {
+        return;
+      }
+      console.warn("showSaveFilePicker failed or restricted, using direct download:", err);
+      triggerAnchorDownload(item);
+    }
+  };
+  const triggerAnchorDownload = (item) => {
+    if (!item.blobUrl) return;
+    try {
+      const a = document.createElement("a");
+      a.href = item.blobUrl;
+      a.download = item.name;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      setSaveNotification({
+        message: `\u062A\u0645 \u062A\u0646\u0632\u064A\u0644 "${item.name}" \u062A\u0644\u0642\u0627\u0626\u064A\u0627\u064B \u0625\u0644\u0649 \u0645\u062C\u0644\u062F \u0627\u0644\u062A\u0646\u0632\u064A\u0644\u0627\u062A! \u{1F4E5}`,
+        type: "success"
+      });
+      setTimeout(() => setSaveNotification(null), 4e3);
+    } catch (err) {
+      console.error("Anchor download error:", err);
+    }
+  };
   const getFileIcon = (mimeType) => {
     if (mimeType.startsWith("image/")) return /* @__PURE__ */ jsx6(ImageIcon, { className: "w-5 h-5 text-blue-500" });
     if (mimeType.startsWith("video/")) return /* @__PURE__ */ jsx6(Film, { className: "w-5 h-5 text-purple-500" });
@@ -996,10 +1075,10 @@ var TransferDashboard = ({
         /* @__PURE__ */ jsx6("div", { className: "w-10 h-10 rounded-xl bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 flex items-center justify-center border border-emerald-500/20", children: peerDeviceInfo?.type === "mobile" ? /* @__PURE__ */ jsx6(Smartphone3, { className: "w-5 h-5" }) : /* @__PURE__ */ jsx6(Laptop2, { className: "w-5 h-5" }) }),
         /* @__PURE__ */ jsxs6("div", { children: [
           /* @__PURE__ */ jsxs6("div", { className: "flex items-center gap-2", children: [
-            /* @__PURE__ */ jsx6("span", { className: "text-xs text-zinc-500 dark:text-zinc-400", children: "Connected to" }),
-            /* @__PURE__ */ jsx6("span", { className: "w-1.5 h-1.5 rounded-full bg-emerald-500" })
+            /* @__PURE__ */ jsx6("span", { className: "text-xs text-zinc-500 dark:text-zinc-400", children: "\u0645\u062A\u0635\u0644 \u0628\u0640" }),
+            /* @__PURE__ */ jsx6("span", { className: "w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" })
           ] }),
-          /* @__PURE__ */ jsx6("h2", { className: "text-base font-bold text-zinc-900 dark:text-zinc-100", children: peerDeviceInfo?.name || "Connected Peer" })
+          /* @__PURE__ */ jsx6("h2", { className: "text-base font-bold text-zinc-900 dark:text-zinc-100", children: peerDeviceInfo?.name || "\u0627\u0644\u062C\u0647\u0627\u0632 \u0627\u0644\u0645\u0642\u062A\u0631\u0646 (Connected Peer)" })
         ] })
       ] }),
       /* @__PURE__ */ jsxs6("label", { className: "flex items-center gap-2 text-xs text-zinc-600 dark:text-zinc-400 cursor-pointer select-none", children: [
@@ -1009,22 +1088,62 @@ var TransferDashboard = ({
             type: "checkbox",
             checked: autoAccept,
             onChange: (e) => onToggleAutoAccept(e.target.checked),
-            className: "w-4 h-4 rounded text-blue-600 focus:ring-blue-500 dark:bg-zinc-800 border-zinc-300 dark:border-zinc-700",
+            className: "w-4 h-4 rounded text-blue-600 focus:ring-blue-500 dark:bg-zinc-800 border-zinc-300 dark:border-zinc-700 cursor-pointer",
             id: "auto-accept-checkbox"
           }
         ),
-        /* @__PURE__ */ jsx6("span", { children: "Auto-accept incoming files from this device" })
+        /* @__PURE__ */ jsx6("span", { className: "font-medium", children: "\u0642\u0628\u0648\u0644 \u0648\u062A\u0646\u0632\u064A\u0644 \u0627\u0644\u0645\u0644\u0641\u0627\u062A \u062A\u0644\u0642\u0627\u0626\u064A\u0627\u064B (Auto-Accept)" })
       ] })
+    ] }),
+    saveNotification && /* @__PURE__ */ jsxs6("div", { className: "p-4 rounded-xl bg-emerald-50 dark:bg-emerald-950/60 border border-emerald-200 dark:border-emerald-800 text-emerald-800 dark:text-emerald-200 text-xs sm:text-sm flex items-center justify-between shadow-md animate-in fade-in slide-in-from-top-2", children: [
+      /* @__PURE__ */ jsxs6("div", { className: "flex items-center gap-2.5", children: [
+        /* @__PURE__ */ jsx6(CheckCircle2, { className: "w-5 h-5 text-emerald-600 dark:text-emerald-400 shrink-0" }),
+        /* @__PURE__ */ jsx6("span", { className: "font-medium", children: saveNotification.message })
+      ] }),
+      /* @__PURE__ */ jsx6(
+        "button",
+        {
+          onClick: () => setSaveNotification(null),
+          className: "text-emerald-600 hover:text-emerald-800 p-1 cursor-pointer",
+          children: /* @__PURE__ */ jsx6(X4, { className: "w-4 h-4" })
+        }
+      )
+    ] }),
+    isMobile && /* @__PURE__ */ jsxs6("div", { className: "p-5 rounded-2xl bg-gradient-to-r from-blue-600 via-indigo-600 to-purple-600 text-white shadow-xl space-y-3.5 border border-blue-400/30 animate-in fade-in slide-in-from-top-2", children: [
+      /* @__PURE__ */ jsxs6("div", { className: "flex items-center justify-between", children: [
+        /* @__PURE__ */ jsxs6("div", { className: "flex items-center gap-2", children: [
+          /* @__PURE__ */ jsx6("span", { className: "w-2.5 h-2.5 rounded-full bg-emerald-400 animate-ping" }),
+          /* @__PURE__ */ jsx6("span", { className: "text-xs font-bold uppercase tracking-wider text-blue-100", children: "\u0627\u0642\u062A\u0631\u0627\u0646 \u0646\u0627\u062C\u062D \u0628\u0627\u0644\u0643\u0645\u0628\u064A\u0648\u062A\u0631 \u26A1" })
+        ] }),
+        /* @__PURE__ */ jsx6("span", { className: "text-xs font-semibold text-blue-100 bg-white/20 px-2.5 py-0.5 rounded-full", children: peerDeviceInfo?.name || "\u0627\u0644\u0643\u0645\u0628\u064A\u0648\u062A\u0631" })
+      ] }),
+      /* @__PURE__ */ jsxs6("div", { children: [
+        /* @__PURE__ */ jsx6("h3", { className: "text-base sm:text-lg font-bold text-white", children: "\u0627\u062E\u062A\u0631 \u0627\u0644\u0645\u0644\u0641\u0627\u062A \u0623\u0648 \u0627\u0644\u0635\u0648\u0631 \u0644\u0625\u0631\u0633\u0627\u0644\u0647\u0627 \u0641\u0648\u0631\u0627\u064B \u0625\u0644\u0649 \u0627\u0644\u0643\u0645\u0628\u064A\u0648\u062A\u0631 \u{1F4E4}" }),
+        /* @__PURE__ */ jsx6("p", { className: "text-xs text-blue-100 mt-1 leading-relaxed", children: "\u0627\u0636\u063A\u0637 \u0639\u0644\u0649 \u0627\u0644\u0632\u0631 \u0623\u062F\u0646\u0627\u0647 \u0644\u0627\u062E\u062A\u064A\u0627\u0631 \u0627\u0644\u0645\u0644\u0641\u0627\u062A \u0645\u0646 \u0647\u0627\u062A\u0641\u0643\u061B \u0633\u064A\u0628\u062F\u0623 \u0627\u0644\u0646\u0642\u0644 \u0627\u0644\u0645\u0628\u0627\u0634\u0631 \u0648\u0627\u0644\u0633\u0631\u064A\u0639 \u062A\u0644\u0642\u0627\u0626\u064A\u0627\u064B \u062F\u0648\u0646 \u0623\u064A \u062E\u0637\u0648\u0627\u062A \u0625\u0636\u0627\u0641\u064A\u0629!" })
+      ] }),
+      /* @__PURE__ */ jsxs6(
+        "button",
+        {
+          type: "button",
+          onClick: () => fileInputRef.current?.click(),
+          className: "w-full py-4 px-5 rounded-xl bg-white hover:bg-blue-50 active:scale-[0.99] text-blue-700 font-extrabold text-sm sm:text-base flex items-center justify-center gap-2.5 shadow-lg transition-all cursor-pointer",
+          id: "mobile-instant-file-picker-btn",
+          children: [
+            /* @__PURE__ */ jsx6(FolderUp, { className: "w-5 h-5 text-blue-600 animate-bounce" }),
+            /* @__PURE__ */ jsx6("span", { children: "\u{1F4C1} \u0641\u062A\u062D \u0627\u0644\u0627\u0633\u062A\u0648\u062F\u064A\u0648 \u0648\u0627\u0644\u0645\u0644\u0641\u0627\u062A \u0644\u0644\u0625\u0631\u0633\u0627\u0644 \u0627\u0644\u0641\u0648\u0631\u064A \u26A1" })
+          ]
+        }
+      )
     ] }),
     incomingOffer && !autoAccept && /* @__PURE__ */ jsx6("div", { className: "p-5 rounded-2xl bg-blue-50 dark:bg-blue-950/40 border border-blue-200 dark:border-blue-900/60 shadow-lg animate-in fade-in slide-in-from-top-2 duration-200", children: /* @__PURE__ */ jsxs6("div", { className: "flex flex-col sm:flex-row sm:items-center justify-between gap-4", children: [
       /* @__PURE__ */ jsxs6("div", { className: "flex items-center gap-3", children: [
         /* @__PURE__ */ jsx6("div", { className: "w-12 h-12 rounded-xl bg-blue-500/10 text-blue-600 dark:text-blue-400 flex items-center justify-center shrink-0", children: getFileIcon(incomingOffer.type) }),
         /* @__PURE__ */ jsxs6("div", { className: "space-y-0.5", children: [
           /* @__PURE__ */ jsxs6("div", { className: "flex items-center gap-1.5", children: [
-            /* @__PURE__ */ jsx6("span", { className: "text-xs font-semibold uppercase tracking-wider text-blue-600 dark:text-blue-400", children: "Incoming Transfer" }),
+            /* @__PURE__ */ jsx6("span", { className: "text-xs font-semibold uppercase tracking-wider text-blue-600 dark:text-blue-400", children: "\u0645\u0644\u0641 \u0648\u0627\u0631\u062F" }),
             /* @__PURE__ */ jsx6("span", { className: "text-xs text-zinc-400", children: "\u2022" }),
             /* @__PURE__ */ jsxs6("span", { className: "text-xs text-zinc-500 dark:text-zinc-400", children: [
-              "from ",
+              "\u0645\u0646 ",
               peerDeviceInfo?.name || "peer"
             ] })
           ] }),
@@ -1037,35 +1156,35 @@ var TransferDashboard = ({
           "button",
           {
             onClick: () => onRejectFile(incomingOffer.id),
-            className: "px-4 py-2 rounded-xl text-xs font-medium text-zinc-700 dark:text-zinc-300 hover:bg-zinc-200/60 dark:hover:bg-zinc-800 transition-colors",
-            id: "reject-incoming-file-btn",
-            children: "Decline"
+            className: "px-4 py-2 rounded-xl text-xs font-semibold text-zinc-600 dark:text-zinc-400 hover:bg-zinc-100 dark:hover:bg-zinc-800 transition-colors",
+            id: "reject-file-btn",
+            children: "\u0631\u0641\u0636"
           }
         ),
-        /* @__PURE__ */ jsxs6(
+        /* @__PURE__ */ jsx6(
           "button",
           {
             onClick: () => onAcceptFile(incomingOffer),
-            className: "px-5 py-2 rounded-xl bg-blue-600 hover:bg-blue-700 text-white text-xs font-semibold shadow-sm transition-colors flex items-center gap-1.5",
-            id: "accept-incoming-file-btn",
-            children: [
-              /* @__PURE__ */ jsx6(Download, { className: "w-3.5 h-3.5" }),
-              /* @__PURE__ */ jsx6("span", { children: "Accept & Download" })
-            ]
+            className: "px-5 py-2 rounded-xl text-xs font-semibold bg-blue-600 hover:bg-blue-700 text-white shadow-xs transition-colors",
+            id: "accept-file-btn",
+            children: "\u0642\u0628\u0648\u0644 \u0648\u0627\u0633\u062A\u0644\u0627\u0645"
           }
         )
       ] })
     ] }) }),
-    /* @__PURE__ */ jsxs6("div", { className: "flex items-center border-b border-zinc-200 dark:border-zinc-800 gap-6", children: [
+    /* @__PURE__ */ jsxs6("div", { className: "flex items-center gap-2 border-b border-zinc-200 dark:border-zinc-800 pb-2", children: [
       /* @__PURE__ */ jsxs6(
         "button",
         {
           onClick: () => setActiveSubTab("files"),
-          className: `pb-3 text-sm font-semibold transition-all relative ${activeSubTab === "files" ? "text-blue-600 dark:text-blue-400" : "text-zinc-500 hover:text-zinc-800 dark:hover:text-zinc-200"}`,
-          id: "tab-files-toggle",
+          className: `px-4 py-2 rounded-xl text-xs font-semibold transition-colors flex items-center gap-2 ${activeSubTab === "files" ? "bg-zinc-900 text-white dark:bg-zinc-100 dark:text-zinc-900" : "text-zinc-600 dark:text-zinc-400 hover:bg-zinc-100 dark:hover:bg-zinc-800"}`,
           children: [
-            /* @__PURE__ */ jsx6("span", { children: "Send Files & Media" }),
-            activeSubTab === "files" && /* @__PURE__ */ jsx6("span", { className: "absolute bottom-0 left-0 right-0 h-0.5 bg-blue-600 dark:bg-blue-400 rounded-full" })
+            /* @__PURE__ */ jsx6(File, { className: "w-4 h-4" }),
+            /* @__PURE__ */ jsxs6("span", { children: [
+              "\u0627\u0644\u0645\u0644\u0641\u0627\u062A (",
+              files.length,
+              ")"
+            ] })
           ]
         }
       ),
@@ -1073,112 +1192,147 @@ var TransferDashboard = ({
         "button",
         {
           onClick: () => setActiveSubTab("text"),
-          className: `pb-3 text-sm font-semibold transition-all relative flex items-center gap-1.5 ${activeSubTab === "text" ? "text-blue-600 dark:text-blue-400" : "text-zinc-500 hover:text-zinc-800 dark:hover:text-zinc-200"}`,
-          id: "tab-text-toggle",
+          className: `px-4 py-2 rounded-xl text-xs font-semibold transition-colors flex items-center gap-2 ${activeSubTab === "text" ? "bg-zinc-900 text-white dark:bg-zinc-100 dark:text-zinc-900" : "text-zinc-600 dark:text-zinc-400 hover:bg-zinc-100 dark:hover:bg-zinc-800"}`,
           children: [
-            /* @__PURE__ */ jsx6("span", { children: "Text & Links" }),
-            texts.length > 0 && /* @__PURE__ */ jsx6("span", { className: "text-[10px] px-1.5 py-0.5 rounded-full bg-blue-100 text-blue-700 dark:bg-blue-900/60 dark:text-blue-300 font-bold", children: texts.length }),
-            activeSubTab === "text" && /* @__PURE__ */ jsx6("span", { className: "absolute bottom-0 left-0 right-0 h-0.5 bg-blue-600 dark:bg-blue-400 rounded-full" })
+            /* @__PURE__ */ jsx6(Send, { className: "w-4 h-4" }),
+            /* @__PURE__ */ jsxs6("span", { children: [
+              "\u0646\u0635\u0648\u0635 \u0648\u0631\u0648\u0627\u0628\u0637 (",
+              texts.length,
+              ")"
+            ] })
           ]
         }
       )
     ] }),
     activeSubTab === "files" && /* @__PURE__ */ jsxs6("div", { className: "space-y-6", children: [
-      /* @__PURE__ */ jsx6("div", { className: "p-8 sm:p-12 rounded-2xl border-2 border-dashed border-zinc-300 dark:border-zinc-700 hover:border-blue-500 dark:hover:border-blue-500 bg-white dark:bg-zinc-900/50 text-center transition-colors", children: /* @__PURE__ */ jsxs6("div", { className: "max-w-md mx-auto space-y-4", children: [
-        /* @__PURE__ */ jsx6("div", { className: "w-14 h-14 rounded-2xl bg-blue-50 dark:bg-blue-950/80 text-blue-600 dark:text-blue-400 mx-auto flex items-center justify-center shadow-xs", children: /* @__PURE__ */ jsx6(UploadCloud, { className: "w-7 h-7" }) }),
-        /* @__PURE__ */ jsxs6("div", { className: "space-y-1", children: [
-          /* @__PURE__ */ jsx6("h3", { className: "text-base font-bold text-zinc-900 dark:text-zinc-100", children: "Drop files here" }),
-          /* @__PURE__ */ jsx6("p", { className: "text-xs text-zinc-500 dark:text-zinc-400", children: "Transfers directly over WebRTC without passing through cloud storage" })
-        ] }),
-        /* @__PURE__ */ jsxs6("div", { className: "pt-2 flex flex-wrap items-center justify-center gap-2", children: [
-          /* @__PURE__ */ jsxs6(
-            "button",
-            {
-              onClick: () => fileInputRef.current?.click(),
-              className: "px-4 py-2.5 rounded-xl bg-blue-600 hover:bg-blue-700 text-white font-medium text-xs shadow-sm transition-colors flex items-center gap-1.5 focus:outline-none",
-              id: "select-files-btn",
-              children: [
-                /* @__PURE__ */ jsx6(File, { className: "w-3.5 h-3.5" }),
-                /* @__PURE__ */ jsx6("span", { children: "Select Files" })
-              ]
-            }
-          ),
-          /* @__PURE__ */ jsxs6(
-            "button",
-            {
-              onClick: () => imageInputRef.current?.click(),
-              className: "px-4 py-2.5 rounded-xl bg-zinc-100 dark:bg-zinc-800 hover:bg-zinc-200 dark:hover:bg-zinc-700 text-zinc-800 dark:text-zinc-200 font-medium text-xs border border-zinc-200 dark:border-zinc-700 transition-colors flex items-center gap-1.5 focus:outline-none",
-              id: "select-images-btn",
-              children: [
-                /* @__PURE__ */ jsx6(ImageIcon, { className: "w-3.5 h-3.5 text-blue-500" }),
-                /* @__PURE__ */ jsx6("span", { children: "Photos" })
-              ]
-            }
-          ),
-          isFolderSupported && /* @__PURE__ */ jsxs6(
-            "button",
-            {
-              onClick: () => folderInputRef.current?.click(),
-              className: "px-4 py-2.5 rounded-xl bg-zinc-100 dark:bg-zinc-800 hover:bg-zinc-200 dark:hover:bg-zinc-700 text-zinc-800 dark:text-zinc-200 font-medium text-xs border border-zinc-200 dark:border-zinc-700 transition-colors flex items-center gap-1.5 focus:outline-none",
-              id: "select-folder-btn",
-              children: [
-                /* @__PURE__ */ jsx6(FolderUp, { className: "w-3.5 h-3.5 text-amber-500" }),
-                /* @__PURE__ */ jsx6("span", { children: "Folder" })
-              ]
-            }
-          )
-        ] }),
-        /* @__PURE__ */ jsx6(
-          "input",
-          {
-            ref: fileInputRef,
-            type: "file",
-            multiple: true,
-            className: "hidden",
-            onChange: (e) => {
-              if (e.target.files && e.target.files.length > 0) {
-                onSendFiles(e.target.files);
-                e.target.value = "";
+      /* @__PURE__ */ jsx6(
+        "div",
+        {
+          onClick: () => fileInputRef.current?.click(),
+          className: "group relative border-2 border-dashed border-zinc-300 dark:border-zinc-700 hover:border-blue-500 dark:hover:border-blue-500 rounded-3xl p-8 sm:p-12 text-center bg-white dark:bg-zinc-900/60 hover:bg-blue-50/20 dark:hover:bg-blue-950/20 transition-all cursor-pointer shadow-2xs",
+          children: /* @__PURE__ */ jsxs6("div", { className: "max-w-md mx-auto space-y-4", children: [
+            /* @__PURE__ */ jsx6("div", { className: "w-16 h-16 rounded-2xl bg-blue-50 dark:bg-blue-950/50 text-blue-600 dark:text-blue-400 mx-auto flex items-center justify-center border border-blue-100 dark:border-blue-900/60 group-hover:scale-105 transition-transform", children: /* @__PURE__ */ jsx6(UploadCloud, { className: "w-8 h-8" }) }),
+            /* @__PURE__ */ jsxs6("div", { children: [
+              /* @__PURE__ */ jsx6("h3", { className: "text-base font-bold text-zinc-900 dark:text-zinc-100", children: isMobile ? "\u0627\u0636\u063A\u0637 \u0644\u0627\u062E\u062A\u064A\u0627\u0631 \u0627\u0644\u0635\u0648\u0631 \u0648\u0627\u0644\u0645\u0644\u0641\u0627\u062A" : "\u0627\u0636\u063A\u0637 \u0644\u0627\u062E\u062A\u064A\u0627\u0631 \u0627\u0644\u0645\u0644\u0641\u0627\u062A \u0623\u0648 \u0627\u0633\u062D\u0628\u0647\u0627 \u0647\u0646\u0627" }),
+              /* @__PURE__ */ jsx6("p", { className: "text-xs text-zinc-500 dark:text-zinc-400 mt-1", children: "\u0625\u0631\u0633\u0627\u0644 \u0645\u0628\u0627\u0634\u0631 \u0648\u0645\u0634\u0641\u0631 P2P \u0639\u0628\u0631 WebRTC \u0628\u0633\u0631\u0639\u0629 \u0627\u0644\u0634\u0628\u0643\u0629 \u0627\u0644\u0645\u062D\u0644\u064A\u0629 \u0627\u0644\u0643\u0627\u0645\u0644\u0629" })
+            ] }),
+            /* @__PURE__ */ jsxs6("div", { className: "flex flex-wrap items-center justify-center gap-2 pt-2", onClick: (e) => e.stopPropagation(), children: [
+              /* @__PURE__ */ jsxs6(
+                "button",
+                {
+                  onClick: () => fileInputRef.current?.click(),
+                  className: "px-4 py-2.5 rounded-xl bg-blue-600 hover:bg-blue-700 text-white font-medium text-xs shadow-sm transition-colors flex items-center gap-1.5 focus:outline-none cursor-pointer",
+                  id: "select-files-btn",
+                  children: [
+                    /* @__PURE__ */ jsx6(File, { className: "w-3.5 h-3.5" }),
+                    /* @__PURE__ */ jsx6("span", { children: "\u062A\u062D\u062F\u064A\u062F \u0645\u0644\u0641\u0627\u062A" })
+                  ]
+                }
+              ),
+              /* @__PURE__ */ jsxs6(
+                "button",
+                {
+                  onClick: () => imageInputRef.current?.click(),
+                  className: "px-4 py-2.5 rounded-xl bg-zinc-100 dark:bg-zinc-800 hover:bg-zinc-200 dark:hover:bg-zinc-700 text-zinc-800 dark:text-zinc-200 font-medium text-xs border border-zinc-200 dark:border-zinc-700 transition-colors flex items-center gap-1.5 focus:outline-none cursor-pointer",
+                  id: "select-images-btn",
+                  children: [
+                    /* @__PURE__ */ jsx6(ImageIcon, { className: "w-3.5 h-3.5 text-blue-500" }),
+                    /* @__PURE__ */ jsx6("span", { children: "\u0635\u0648\u0631 \u0648\u0641\u064A\u062F\u064A\u0648\u0647\u0627\u062A" })
+                  ]
+                }
+              ),
+              isFolderSupported && /* @__PURE__ */ jsxs6(
+                "button",
+                {
+                  onClick: () => folderInputRef.current?.click(),
+                  className: "px-4 py-2.5 rounded-xl bg-zinc-100 dark:bg-zinc-800 hover:bg-zinc-200 dark:hover:bg-zinc-700 text-zinc-800 dark:text-zinc-200 font-medium text-xs border border-zinc-200 dark:border-zinc-700 transition-colors flex items-center gap-1.5 focus:outline-none cursor-pointer",
+                  id: "select-folder-btn",
+                  children: [
+                    /* @__PURE__ */ jsx6(FolderUp, { className: "w-3.5 h-3.5 text-amber-500" }),
+                    /* @__PURE__ */ jsx6("span", { children: "\u0645\u062C\u0644\u062F \u0643\u0627\u0645\u0644" })
+                  ]
+                }
+              ),
+              onUploadCloudFallback && /* @__PURE__ */ jsxs6(
+                "button",
+                {
+                  onClick: () => cloudFileInputRef.current?.click(),
+                  className: "px-3.5 py-2.5 rounded-xl bg-purple-50 dark:bg-purple-950/40 hover:bg-purple-100 dark:hover:bg-purple-900/60 text-purple-700 dark:text-purple-300 font-medium text-xs border border-purple-200 dark:border-purple-800 transition-colors flex items-center gap-1.5 focus:outline-none cursor-pointer",
+                  title: "\u0631\u0641\u0639 \u0648\u062A\u0645\u0631\u064A\u0631 \u0627\u0644\u0645\u0644\u0641 \u0639\u0628\u0631 Supabase Storage \u0643\u0628\u062F\u064A\u0644 \u0625\u0630\u0627 \u062A\u0639\u0630\u0631 P2P",
+                  children: [
+                    /* @__PURE__ */ jsx6(CloudUpload, { className: "w-3.5 h-3.5 text-purple-500" }),
+                    /* @__PURE__ */ jsx6("span", { children: "\u0631\u0641\u0639 \u0633\u062D\u0627\u0628\u064A (Cloud Relay)" })
+                  ]
+                }
+              )
+            ] }),
+            /* @__PURE__ */ jsx6(
+              "input",
+              {
+                ref: fileInputRef,
+                type: "file",
+                multiple: true,
+                className: "hidden",
+                onChange: (e) => {
+                  if (e.target.files && e.target.files.length > 0) {
+                    onSendFiles(e.target.files);
+                    e.target.value = "";
+                  }
+                }
               }
-            }
-          }
-        ),
-        /* @__PURE__ */ jsx6(
-          "input",
-          {
-            ref: imageInputRef,
-            type: "file",
-            multiple: true,
-            accept: "image/*",
-            className: "hidden",
-            onChange: (e) => {
-              if (e.target.files && e.target.files.length > 0) {
-                onSendFiles(e.target.files);
-                e.target.value = "";
+            ),
+            /* @__PURE__ */ jsx6(
+              "input",
+              {
+                ref: imageInputRef,
+                type: "file",
+                multiple: true,
+                accept: "image/*,video/*",
+                className: "hidden",
+                onChange: (e) => {
+                  if (e.target.files && e.target.files.length > 0) {
+                    onSendFiles(e.target.files);
+                    e.target.value = "";
+                  }
+                }
               }
-            }
-          }
-        ),
-        isFolderSupported && /* @__PURE__ */ jsx6(
-          "input",
-          {
-            ref: folderInputRef,
-            type: "file",
-            multiple: true,
-            webkitdirectory: "",
-            className: "hidden",
-            onChange: (e) => {
-              if (e.target.files && e.target.files.length > 0) {
-                onSendFiles(e.target.files);
-                e.target.value = "";
+            ),
+            isFolderSupported && /* @__PURE__ */ jsx6(
+              "input",
+              {
+                ref: folderInputRef,
+                type: "file",
+                multiple: true,
+                webkitdirectory: "",
+                className: "hidden",
+                onChange: (e) => {
+                  if (e.target.files && e.target.files.length > 0) {
+                    onSendFiles(e.target.files);
+                    e.target.value = "";
+                  }
+                }
               }
-            }
-          }
-        )
-      ] }) }),
+            ),
+            onUploadCloudFallback && /* @__PURE__ */ jsx6(
+              "input",
+              {
+                ref: cloudFileInputRef,
+                type: "file",
+                className: "hidden",
+                onChange: (e) => {
+                  if (e.target.files && e.target.files.length > 0) {
+                    onUploadCloudFallback(e.target.files[0]);
+                    e.target.value = "";
+                  }
+                }
+              }
+            )
+          ] })
+        }
+      ),
       files.length > 0 && /* @__PURE__ */ jsxs6("div", { className: "space-y-3", children: [
         /* @__PURE__ */ jsxs6("h4", { className: "text-xs font-semibold uppercase tracking-wider text-zinc-500 dark:text-zinc-400", children: [
-          "Transfers (",
+          "\u0642\u0627\u0626\u0645\u0629 \u0627\u0644\u0646\u0642\u0644 \u0648\u0627\u0644\u0645\u0644\u0641\u0627\u062A (",
           files.length,
           ")"
         ] }),
@@ -1195,10 +1349,10 @@ var TransferDashboard = ({
                       /* @__PURE__ */ jsx6("span", { className: "font-semibold text-sm text-zinc-900 dark:text-zinc-100 truncate max-w-xs sm:max-w-md", children: item.name }),
                       item.isIncoming ? /* @__PURE__ */ jsxs6("span", { className: "inline-flex items-center gap-0.5 text-[10px] text-cyan-600 dark:text-cyan-400 font-medium", children: [
                         /* @__PURE__ */ jsx6(ArrowDownLeft, { className: "w-3 h-3" }),
-                        " Received"
+                        " \u0645\u0633\u062A\u0644\u0645"
                       ] }) : /* @__PURE__ */ jsxs6("span", { className: "inline-flex items-center gap-0.5 text-[10px] text-blue-600 dark:text-blue-400 font-medium", children: [
                         /* @__PURE__ */ jsx6(ArrowUpRight, { className: "w-3 h-3" }),
-                        " Sent"
+                        " \u0645\u0631\u0633\u0644"
                       ] })
                     ] }),
                     /* @__PURE__ */ jsxs6("div", { className: "text-xs text-zinc-500 dark:text-zinc-400 flex items-center gap-2", children: [
@@ -1219,17 +1373,30 @@ var TransferDashboard = ({
                   item.state === "completed" && /* @__PURE__ */ jsxs6("div", { className: "flex items-center gap-2", children: [
                     /* @__PURE__ */ jsxs6("span", { className: "hidden sm:inline-flex items-center gap-1 text-xs text-emerald-600 dark:text-emerald-400 font-medium", children: [
                       /* @__PURE__ */ jsx6(CheckCircle2, { className: "w-4 h-4" }),
-                      /* @__PURE__ */ jsx6("span", { children: "Verified" })
+                      /* @__PURE__ */ jsx6("span", { children: "\u0645\u0643\u062A\u0645\u0644" })
                     ] }),
-                    item.blobUrl && /* @__PURE__ */ jsxs6(
-                      "a",
+                    hasFileSystemAccess && item.blobUrl && /* @__PURE__ */ jsxs6(
+                      "button",
                       {
-                        href: item.blobUrl,
-                        download: item.name,
-                        className: "px-3 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-medium flex items-center gap-1 shadow-xs transition-colors",
+                        type: "button",
+                        onClick: () => handleSaveWithSystemPicker(item),
+                        className: "px-3 py-1.5 rounded-lg bg-blue-600 hover:bg-blue-700 text-white text-xs font-semibold flex items-center gap-1.5 shadow-xs transition-colors cursor-pointer",
+                        title: "\u0641\u062A\u062D \u0646\u0627\u0641\u0630\u0629 \u0645\u0633\u062A\u0643\u0634\u0641 \u0627\u0644\u0645\u0644\u0641\u0627\u062A \u0644\u062A\u062D\u062F\u064A\u062F \u0645\u062C\u0644\u062F \u0648\u0627\u0633\u0645 \u0627\u0644\u062D\u0641\u0638 (Save As...)",
+                        children: [
+                          /* @__PURE__ */ jsx6(HardDrive, { className: "w-3.5 h-3.5" }),
+                          /* @__PURE__ */ jsx6("span", { children: "\u062D\u0641\u0638 \u0641\u064A \u0645\u062C\u0644\u062F (Save As)" })
+                        ]
+                      }
+                    ),
+                    item.blobUrl && /* @__PURE__ */ jsxs6(
+                      "button",
+                      {
+                        type: "button",
+                        onClick: () => triggerAnchorDownload(item),
+                        className: "px-3 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-medium flex items-center gap-1 shadow-xs transition-colors cursor-pointer",
                         children: [
                           /* @__PURE__ */ jsx6(Download, { className: "w-3 h-3" }),
-                          /* @__PURE__ */ jsx6("span", { children: "Save" })
+                          /* @__PURE__ */ jsx6("span", { children: hasFileSystemAccess ? "\u062A\u0646\u0632\u064A\u0644 \u0639\u0627\u062F\u064A" : "\u062D\u0641\u0638" })
                         ]
                       }
                     )
@@ -1238,17 +1405,17 @@ var TransferDashboard = ({
                     "button",
                     {
                       onClick: () => onCancelTransfer(item.id),
-                      className: "p-1.5 rounded-lg text-zinc-400 hover:text-rose-600 hover:bg-rose-50 dark:hover:bg-rose-950/40 transition-colors",
-                      title: "Cancel Transfer",
+                      className: "p-1.5 rounded-lg text-zinc-400 hover:text-rose-600 hover:bg-rose-50 dark:hover:bg-rose-950/40 transition-colors cursor-pointer",
+                      title: "\u0625\u0644\u063A\u0627\u0621 \u0627\u0644\u0646\u0642\u0644",
                       children: /* @__PURE__ */ jsx6(X4, { className: "w-4 h-4" })
                     }
                   ),
                   item.state === "failed" && /* @__PURE__ */ jsxs6("span", { className: "inline-flex items-center gap-1 text-xs text-rose-600 dark:text-rose-400 font-medium", children: [
                     /* @__PURE__ */ jsx6(AlertCircle3, { className: "w-3.5 h-3.5" }),
-                    /* @__PURE__ */ jsx6("span", { children: "Failed" })
+                    /* @__PURE__ */ jsx6("span", { children: "\u0641\u0634\u0644" })
                   ] }),
-                  item.state === "cancelled" && /* @__PURE__ */ jsx6("span", { className: "text-xs text-zinc-500", children: "Cancelled" }),
-                  item.state === "verifying" && /* @__PURE__ */ jsx6("span", { className: "text-xs text-amber-500 animate-pulse", children: "Verifying hash..." })
+                  item.state === "cancelled" && /* @__PURE__ */ jsx6("span", { className: "text-xs text-zinc-500", children: "\u062A\u0645 \u0627\u0644\u0625\u0644\u063A\u0627\u0621" }),
+                  item.state === "verifying" && /* @__PURE__ */ jsx6("span", { className: "text-xs text-amber-500 animate-pulse", children: "\u0641\u062D\u0635 \u0627\u0644\u062A\u0637\u0627\u0628\u0642..." })
                 ] })
               ] }),
               (item.state === "transferring" || item.state === "preparing" || item.state === "verifying") && /* @__PURE__ */ jsxs6("div", { className: "space-y-1.5", children: [
@@ -1286,13 +1453,13 @@ var TransferDashboard = ({
     ] }),
     activeSubTab === "text" && /* @__PURE__ */ jsxs6("div", { className: "space-y-6", children: [
       /* @__PURE__ */ jsxs6("form", { onSubmit: handleTextSubmit, className: "p-4 rounded-2xl bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 shadow-xs space-y-3", children: [
-        /* @__PURE__ */ jsx6("label", { className: "block text-xs font-semibold uppercase tracking-wider text-zinc-500 dark:text-zinc-400", children: "Send Text, Code, or URL" }),
+        /* @__PURE__ */ jsx6("label", { className: "block text-xs font-semibold uppercase tracking-wider text-zinc-500 dark:text-zinc-400", children: "\u0625\u0631\u0633\u0627\u0644 \u0646\u0635\u060C \u0643\u0648\u062F\u060C \u0623\u0648 \u0631\u0627\u0628\u0637" }),
         /* @__PURE__ */ jsx6(
           "textarea",
           {
             value: textInput,
             onChange: (e) => setTextInput(e.target.value),
-            placeholder: "Paste anything here: notes, links, code snippets...",
+            placeholder: "\u0623\u0644\u0635\u0642 \u0623\u064A \u0646\u0635 \u0647\u0646\u0627: \u0645\u0644\u0627\u062D\u0638\u0627\u062A\u060C \u0631\u0648\u0627\u0628\u0637\u060C \u0623\u0643\u0648\u0627\u062F...",
             rows: 3,
             className: "w-full p-3 rounded-xl bg-zinc-50 dark:bg-zinc-950 border border-zinc-200 dark:border-zinc-800 text-sm text-zinc-900 dark:text-zinc-100 placeholder-zinc-400 focus:outline-none focus:ring-2 focus:ring-blue-500 resize-none font-sans",
             id: "text-message-textarea"
@@ -1301,18 +1468,18 @@ var TransferDashboard = ({
         /* @__PURE__ */ jsxs6("div", { className: "flex items-center justify-between", children: [
           isValidUrl(textInput) ? /* @__PURE__ */ jsxs6("div", { className: "flex items-center gap-1 text-xs text-blue-600 dark:text-blue-400 font-medium", children: [
             /* @__PURE__ */ jsx6(LinkIcon, { className: "w-3.5 h-3.5" }),
-            /* @__PURE__ */ jsx6("span", { children: "Valid Link detected" })
-          ] }) : /* @__PURE__ */ jsx6("span", { className: "text-xs text-zinc-400", children: "Instant direct transfer" }),
+            /* @__PURE__ */ jsx6("span", { children: "\u062A\u0645 \u0627\u0643\u062A\u0634\u0627\u0641 \u0631\u0627\u0628\u0637 \u0635\u0627\u0644\u062D" })
+          ] }) : /* @__PURE__ */ jsx6("span", { className: "text-xs text-zinc-400", children: "\u0646\u0642\u0644 \u0645\u0628\u0627\u0634\u0631 \u0641\u0648\u0631\u064A" }),
           /* @__PURE__ */ jsxs6(
             "button",
             {
               type: "submit",
               disabled: !textInput.trim(),
-              className: "px-4 py-2 rounded-xl bg-blue-600 hover:bg-blue-700 text-white font-semibold text-xs shadow-sm transition-colors flex items-center gap-1.5 disabled:opacity-50 disabled:cursor-not-allowed",
+              className: "px-4 py-2 rounded-xl bg-blue-600 hover:bg-blue-700 text-white font-semibold text-xs shadow-sm transition-colors flex items-center gap-1.5 disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer",
               id: "send-text-btn",
               children: [
                 /* @__PURE__ */ jsx6(Send, { className: "w-3.5 h-3.5" }),
-                /* @__PURE__ */ jsx6("span", { children: "Send" })
+                /* @__PURE__ */ jsx6("span", { children: "\u0625\u0631\u0633\u0627\u0644" })
               ]
             }
           )
@@ -1320,20 +1487,20 @@ var TransferDashboard = ({
       ] }),
       /* @__PURE__ */ jsxs6("div", { className: "space-y-3", children: [
         /* @__PURE__ */ jsxs6("h4", { className: "text-xs font-semibold uppercase tracking-wider text-zinc-500 dark:text-zinc-400", children: [
-          "Shared Texts (",
+          "\u0627\u0644\u0646\u0635\u0648\u0635 \u0627\u0644\u0645\u0634\u062A\u0631\u0643\u0629 (",
           texts.length,
           ")"
         ] }),
-        texts.length === 0 ? /* @__PURE__ */ jsx6("div", { className: "p-8 text-center rounded-xl bg-zinc-50 dark:bg-zinc-900/40 border border-zinc-200 dark:border-zinc-800 text-xs text-zinc-500", children: "No text messages sent or received in this session yet." }) : /* @__PURE__ */ jsx6("div", { className: "space-y-2.5", children: texts.map((item) => /* @__PURE__ */ jsxs6(
+        texts.length === 0 ? /* @__PURE__ */ jsx6("div", { className: "p-8 text-center rounded-xl bg-zinc-50 dark:bg-zinc-900/40 border border-zinc-200 dark:border-zinc-800 text-xs text-zinc-500", children: "\u0644\u0645 \u064A\u062A\u0645 \u0625\u0631\u0633\u0627\u0644 \u0623\u0648 \u0627\u0633\u062A\u0644\u0627\u0645 \u0623\u064A \u0631\u0633\u0627\u0626\u0644 \u0646\u0635\u064A\u0629 \u0641\u064A \u0647\u0630\u0647 \u0627\u0644\u062C\u0644\u0633\u0629 \u0628\u0639\u062F." }) : /* @__PURE__ */ jsx6("div", { className: "space-y-2.5", children: texts.map((item) => /* @__PURE__ */ jsxs6(
           "div",
           {
             className: "p-4 rounded-xl bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 shadow-2xs space-y-2.5",
             children: [
               /* @__PURE__ */ jsxs6("div", { className: "flex items-center justify-between text-xs text-zinc-500", children: [
                 /* @__PURE__ */ jsx6("span", { className: "font-medium text-zinc-700 dark:text-zinc-300", children: item.isIncoming ? /* @__PURE__ */ jsxs6("span", { className: "text-cyan-600 dark:text-cyan-400", children: [
-                  "Received from ",
+                  "\u0645\u0633\u062A\u0644\u0645 \u0645\u0646 ",
                   peerDeviceInfo?.name || "peer"
-                ] }) : /* @__PURE__ */ jsx6("span", { className: "text-blue-600 dark:text-blue-400", children: "Sent by this device" }) }),
+                ] }) : /* @__PURE__ */ jsx6("span", { className: "text-blue-600 dark:text-blue-400", children: "\u0645\u0631\u0633\u0644 \u0645\u0646 \u0647\u0630\u0627 \u0627\u0644\u062C\u0647\u0627\u0632" }) }),
                 /* @__PURE__ */ jsx6("span", { children: new Date(item.timestamp).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) })
               ] }),
               /* @__PURE__ */ jsx6("div", { className: "text-sm text-zinc-800 dark:text-zinc-200 whitespace-pre-wrap font-mono break-all p-3 rounded-lg bg-zinc-50 dark:bg-zinc-950 border border-zinc-100 dark:border-zinc-800/80 select-text", children: item.text }),
@@ -1347,7 +1514,7 @@ var TransferDashboard = ({
                     className: "px-3 py-1.5 rounded-lg bg-blue-50 dark:bg-blue-950/60 hover:bg-blue-100 dark:hover:bg-blue-900 text-blue-700 dark:text-blue-300 text-xs font-medium flex items-center gap-1 transition-colors",
                     children: [
                       /* @__PURE__ */ jsx6(ExternalLink2, { className: "w-3 h-3" }),
-                      /* @__PURE__ */ jsx6("span", { children: "Open Link" })
+                      /* @__PURE__ */ jsx6("span", { children: "\u0641\u062A\u062D \u0627\u0644\u0631\u0627\u0628\u0637" })
                     ]
                   }
                 ),
@@ -1355,13 +1522,13 @@ var TransferDashboard = ({
                   "button",
                   {
                     onClick: () => handleCopyText(item.id, item.text),
-                    className: "px-3 py-1.5 rounded-lg bg-zinc-100 dark:bg-zinc-800 hover:bg-zinc-200 dark:hover:bg-zinc-700 text-zinc-700 dark:text-zinc-300 text-xs font-medium flex items-center gap-1 transition-colors",
+                    className: "px-3 py-1.5 rounded-lg bg-zinc-100 dark:bg-zinc-800 hover:bg-zinc-200 dark:hover:bg-zinc-700 text-zinc-700 dark:text-zinc-300 text-xs font-medium flex items-center gap-1 transition-colors cursor-pointer",
                     children: copiedTextId === item.id ? /* @__PURE__ */ jsxs6(Fragment4, { children: [
                       /* @__PURE__ */ jsx6(Check2, { className: "w-3 h-3 text-emerald-500" }),
-                      /* @__PURE__ */ jsx6("span", { children: "Copied" })
+                      /* @__PURE__ */ jsx6("span", { children: "\u062A\u0645 \u0627\u0644\u0646\u0633\u062E" })
                     ] }) : /* @__PURE__ */ jsxs6(Fragment4, { children: [
                       /* @__PURE__ */ jsx6(Copy2, { className: "w-3 h-3" }),
-                      /* @__PURE__ */ jsx6("span", { children: "Copy" })
+                      /* @__PURE__ */ jsx6("span", { children: "\u0646\u0633\u062E" })
                     ] })
                   }
                 )
@@ -1564,7 +1731,7 @@ import {
   Wifi as Wifi2,
   Smartphone as Smartphone4,
   ShieldAlert,
-  HardDrive
+  HardDrive as HardDrive2
 } from "lucide-react";
 import { jsx as jsx9, jsxs as jsxs9 } from "react/jsx-runtime";
 var HelpView = () => {
@@ -1585,7 +1752,7 @@ var HelpView = () => {
       solution: "When an incoming file completes on iOS Safari, click 'Save'. iOS will present a download prompt or file preview. Tap the standard Share icon and choose 'Save to Files' (for documents, archives, or videos) or 'Save Image' (for photos)."
     },
     {
-      icon: /* @__PURE__ */ jsx9(HardDrive, { className: "w-5 h-5 text-amber-500" }),
+      icon: /* @__PURE__ */ jsx9(HardDrive2, { className: "w-5 h-5 text-amber-500" }),
       title: "Transfer is interrupted or slows down",
       solution: "Modern mobile operating systems aggressively throttle or suspend background browser tabs. Keep the QuickDrop browser tab active in the foreground on both devices until the transfer reaches 100% and SHA-256 verification completes."
     },
@@ -2367,6 +2534,33 @@ var AuthView = ({ onAuthSuccess }) => {
     };
     onAuthSuccess(fallbackUser);
   };
+  const [incomingPairCode, setIncomingPairCode] = useState5(null);
+  useEffect4(() => {
+    try {
+      const params = new URLSearchParams(window.location.search);
+      const code = params.get("code");
+      const join = params.get("join");
+      if (code || join) {
+        setIncomingPairCode(code || join);
+      }
+    } catch {
+    }
+  }, []);
+  const handleQuickGuestPair = () => {
+    const guestUser = {
+      id: "guest_mobile_" + Math.random().toString(36).substring(2, 9),
+      email: "mobile@quickdrop.local",
+      name: "\u0647\u0627\u062A\u0641 \u0645\u062D\u0645\u0648\u0644 (Mobile)",
+      deviceName: "\u0647\u0627\u062A\u0641 \u0645\u062D\u0645\u0648\u0644 (Sender)",
+      createdAt: (/* @__PURE__ */ new Date()).toISOString(),
+      emailConfirmed: true
+    };
+    try {
+      localStorage.setItem("quickdrop_current_user_session", JSON.stringify(guestUser));
+    } catch {
+    }
+    onAuthSuccess(guestUser);
+  };
   useEffect4(() => {
     if (resendCooldown <= 0) return;
     const interval = setInterval(() => {
@@ -2586,6 +2780,28 @@ var AuthView = ({ onAuthSuccess }) => {
     successMessage && /* @__PURE__ */ jsxs10("div", { className: "p-3.5 rounded-xl bg-emerald-50 dark:bg-emerald-950/50 border border-emerald-200 dark:border-emerald-900/60 text-xs text-emerald-700 dark:text-emerald-300 flex items-start gap-2.5", children: [
       /* @__PURE__ */ jsx10(CheckCircle23, { className: "w-4 h-4 shrink-0 mt-0.5" }),
       /* @__PURE__ */ jsx10("span", { className: "leading-relaxed", children: successMessage })
+    ] }),
+    incomingPairCode && mode !== "verify" && /* @__PURE__ */ jsxs10("div", { className: "p-4 rounded-2xl bg-gradient-to-br from-blue-600 to-indigo-600 text-white shadow-lg space-y-3 border border-blue-400/30", children: [
+      /* @__PURE__ */ jsxs10("div", { className: "flex items-center justify-between", children: [
+        /* @__PURE__ */ jsxs10("span", { className: "inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full bg-white/20 text-[11px] font-bold uppercase tracking-wider text-blue-100", children: [
+          /* @__PURE__ */ jsx10("span", { className: "w-2 h-2 rounded-full bg-emerald-400 animate-pulse" }),
+          "\u0627\u0642\u062A\u0631\u0627\u0646 \u0633\u0631\u064A\u0639 \u0639\u0628\u0631 QR Code"
+        ] }),
+        /* @__PURE__ */ jsx10("span", { className: "font-mono text-xs font-semibold text-blue-100 bg-blue-900/40 px-2 py-0.5 rounded", children: incomingPairCode })
+      ] }),
+      /* @__PURE__ */ jsx10("p", { className: "text-xs text-blue-100 leading-relaxed", children: "\u062A\u0645 \u0627\u0643\u062A\u0634\u0627\u0641 \u062C\u0644\u0633\u0629 \u0646\u0642\u0644 \u0645\u0644\u0641\u0627\u062A \u062C\u0627\u0647\u0632\u0629 \u0645\u0646 \u0627\u0644\u0643\u0645\u0628\u064A\u0648\u062A\u0631. \u0627\u0636\u063A\u0637 \u0627\u0644\u0632\u0631 \u0623\u062F\u0646\u0627\u0647 \u0644\u0644\u0645\u062A\u0627\u0628\u0639\u0629 \u0643\u062C\u0647\u0627\u0632 \u0645\u0631\u0633\u0644 \u0648\u0627\u0644\u0627\u0642\u062A\u0631\u0627\u0646 \u0641\u0648\u0631\u0627\u064B \u062F\u0648\u0646 \u062A\u0633\u062C\u064A\u0644 \u062F\u062E\u0648\u0644:" }),
+      /* @__PURE__ */ jsxs10(
+        "button",
+        {
+          type: "button",
+          onClick: handleQuickGuestPair,
+          className: "w-full py-3 px-4 rounded-xl bg-white hover:bg-blue-50 active:scale-[0.99] text-blue-700 font-bold text-sm flex items-center justify-center gap-2 shadow-md transition-all cursor-pointer",
+          children: [
+            /* @__PURE__ */ jsx10("span", { children: "\u{1F4F1} \u0645\u062A\u0627\u0628\u0639\u0629 \u0643\u062C\u0647\u0627\u0632 \u0645\u0631\u0633\u0644 \u0648\u0627\u0644\u0627\u0642\u062A\u0631\u0627\u0646 \u0641\u0648\u0631\u0627\u064B \u26A1" }),
+            /* @__PURE__ */ jsx10(ArrowRight3, { className: "w-4 h-4" })
+          ]
+        }
+      )
     ] }),
     mode !== "verify" && /* @__PURE__ */ jsxs10("div", { className: "space-y-4", children: [
       /* @__PURE__ */ jsxs10(
@@ -3340,6 +3556,191 @@ function getLocalDeviceInfo() {
   };
 }
 
+// src/lib/supabase-service.ts
+var SupabaseService = class {
+  static {
+    this.activeChannels = /* @__PURE__ */ new Map();
+  }
+  /**
+   * Subscribe to a Supabase Realtime Channel for ultra-low-latency signaling
+   */
+  static subscribeToSignalingChannel(safeTopic, onMessage) {
+    const supabase = getSupabaseClient();
+    if (!supabase) return null;
+    try {
+      const channelName = `quickdrop:${safeTopic}`;
+      if (this.activeChannels.has(channelName)) {
+        try {
+          const old = this.activeChannels.get(channelName);
+          old?.unsubscribe();
+        } catch {
+        }
+      }
+      const channel = supabase.channel(channelName, {
+        config: {
+          broadcast: { self: false }
+        }
+      });
+      channel.on("broadcast", { event: "signal" }, (event) => {
+        if (event && event.payload) {
+          onMessage(event.payload);
+        }
+      }).subscribe((status) => {
+        if (status === "SUBSCRIBED") {
+          console.log(`[Supabase Realtime] Connected to channel: ${channelName}`);
+        }
+      });
+      this.activeChannels.set(channelName, channel);
+      return channel;
+    } catch (err) {
+      console.warn("[Supabase Realtime] Subscribe failed:", err);
+      return null;
+    }
+  }
+  /**
+   * Broadcast a signaling message through the Supabase Realtime Channel
+   */
+  static async broadcastSignal(safeTopic, payload) {
+    const channelName = `quickdrop:${safeTopic}`;
+    const channel = this.activeChannels.get(channelName);
+    if (!channel) return false;
+    try {
+      await channel.send({
+        type: "broadcast",
+        event: "signal",
+        payload
+      });
+      return true;
+    } catch (err) {
+      console.warn("[Supabase Realtime] Broadcast failed:", err);
+      return false;
+    }
+  }
+  /**
+   * Unsubscribe from signaling channel
+   */
+  static unsubscribeSignalingChannel(safeTopic) {
+    const channelName = `quickdrop:${safeTopic}`;
+    const channel = this.activeChannels.get(channelName);
+    if (channel) {
+      try {
+        channel.unsubscribe();
+      } catch {
+      }
+      this.activeChannels.delete(channelName);
+    }
+  }
+  /**
+   * Record session in Supabase Database (graceful try/catch fallback)
+   */
+  static async recordSession(session, hostDeviceInfo) {
+    const supabase = getSupabaseClient();
+    if (!supabase) return;
+    try {
+      await supabase.from("quickdrop_sessions").upsert(
+        {
+          session_id: session.sessionId,
+          host_device: hostDeviceInfo || null,
+          status: "waiting",
+          expires_at: session.expiresAt,
+          updated_at: (/* @__PURE__ */ new Date()).toISOString()
+        },
+        { onConflict: "session_id" }
+      );
+    } catch (err) {
+      console.debug("[Supabase DB] Session record skipped:", err);
+    }
+  }
+  /**
+   * Update session peer device and state in Supabase Database
+   */
+  static async updateSessionPeer(sessionId, peerDeviceInfo, status = "connected") {
+    const supabase = getSupabaseClient();
+    if (!supabase) return;
+    try {
+      await supabase.from("quickdrop_sessions").update({
+        peer_device: peerDeviceInfo,
+        status,
+        updated_at: (/* @__PURE__ */ new Date()).toISOString()
+      }).eq("session_id", sessionId);
+    } catch (err) {
+      console.debug("[Supabase DB] Session peer update skipped:", err);
+    }
+  }
+  /**
+   * Record transfer in Supabase Database
+   */
+  static async recordTransfer(item, sessionId, method = "webrtc_p2p", storagePath) {
+    const supabase = getSupabaseClient();
+    if (!supabase) return;
+    try {
+      await supabase.from("quickdrop_transfers").upsert(
+        {
+          id: item.id,
+          session_id: sessionId,
+          name: item.name,
+          size: item.size,
+          type: item.type,
+          status: item.state,
+          transfer_method: method,
+          storage_path: storagePath || null,
+          sha256: item.sha256 || null,
+          completed_at: item.state === "completed" ? (/* @__PURE__ */ new Date()).toISOString() : null
+        },
+        { onConflict: "id" }
+      );
+    } catch (err) {
+      console.debug("[Supabase DB] Transfer record skipped:", err);
+    }
+  }
+  /**
+   * Upload file to Supabase Storage as a cloud fallback when P2P is blocked
+   */
+  static async uploadToStorageFallback(file, sessionId, onProgress) {
+    const supabase = getSupabaseClient();
+    if (!supabase) {
+      return { success: false, error: "\u0633\u062D\u0627\u0628\u0629 Supabase \u063A\u064A\u0631 \u0645\u0631\u0628\u0648\u0637\u0629. \u064A\u0631\u062C\u0649 \u0631\u0628\u0637 \u0645\u0634\u0631\u0648\u0639 Supabase \u0644\u062A\u0641\u0639\u064A\u0644 \u0627\u0644\u0631\u0641\u0639 \u0627\u0644\u0633\u062D\u0627\u0628\u064A \u0627\u0644\u0627\u062D\u062A\u064A\u0627\u0637\u064A." };
+    }
+    try {
+      const bucket = "quickdrop-transfers";
+      const cleanName = file.name.replace(/[^a-zA-Z0-9._-]/g, "_");
+      const filePath = `${sessionId}/${Date.now()}_${cleanName}`;
+      onProgress?.(25);
+      const { data, error } = await supabase.storage.from(bucket).upload(filePath, file, {
+        cacheControl: "3600",
+        upsert: true
+      });
+      if (error) {
+        if (error.message.includes("not found") || error.message.includes("bucket")) {
+          try {
+            await supabase.storage.createBucket(bucket, { public: true });
+            const retry = await supabase.storage.from(bucket).upload(filePath, file, { upsert: true });
+            if (retry.error) return { success: false, error: retry.error.message };
+          } catch {
+            return { success: false, error: error.message };
+          }
+        } else {
+          return { success: false, error: error.message };
+        }
+      }
+      onProgress?.(80);
+      const { data: pubData } = supabase.storage.from(bucket).getPublicUrl(filePath);
+      const publicUrl = pubData?.publicUrl || "";
+      onProgress?.(100);
+      return {
+        success: true,
+        url: publicUrl,
+        path: filePath
+      };
+    } catch (err) {
+      return {
+        success: false,
+        error: err.message || "\u0641\u0634\u0644 \u0627\u0644\u0631\u0641\u0639 \u0625\u0644\u0649 Supabase Storage"
+      };
+    }
+  }
+};
+
 // src/lib/signaling.ts
 var CUSTOM_SIGNALING_URL = typeof import.meta !== "undefined" && import.meta.env && import.meta.env.VITE_SIGNALING_SERVER_URL || "";
 var SignalingClient = class {
@@ -3353,16 +3754,22 @@ var SignalingClient = class {
     this.sessionId = "";
     this.safeTopic = "";
     this.isConnected = false;
+    this.seenMessages = /* @__PURE__ */ new Set();
     this.callbacks = callbacks;
   }
   /**
    * Connect to signaling relay for a given session ID
+   * Uses Supabase Realtime Channels as high-priority low-latency transport,
+   * with fallback to WebSocket / ntfy relay for resilience.
    */
   async connect(sessionId, role) {
     this.isExplicitlyClosed = false;
     this.role = role;
     this.sessionId = sessionId;
     this.safeTopic = "quickdrop-" + sessionId.toLowerCase().replace(/[^a-z0-9]/g, "");
+    SupabaseService.subscribeToSignalingChannel(this.safeTopic, (payload) => {
+      this.handleRelayMessage(payload);
+    });
     return new Promise((resolve) => {
       try {
         const wsUrl = CUSTOM_SIGNALING_URL ? CUSTOM_SIGNALING_URL.replace(/^http/i, "ws").replace(/\/+$/, "") + "/" + this.safeTopic + "/ws" : `wss://ntfy.sh/${this.safeTopic}/ws`;
@@ -3420,6 +3827,13 @@ var SignalingClient = class {
   handleRelayMessage(msg) {
     if (!msg || typeof msg !== "object") return;
     if (msg.sender === this.role) return;
+    const msgKey = `${msg.type}_${msg.sender}_${msg.timestamp || ""}_${JSON.stringify(msg.sdp || msg.candidate || msg.sessionId || msg.offer?.id || "")}`;
+    if (this.seenMessages.has(msgKey)) return;
+    this.seenMessages.add(msgKey);
+    if (this.seenMessages.size > 200) {
+      const first = this.seenMessages.values().next().value;
+      if (first) this.seenMessages.delete(first);
+    }
     switch (msg.type) {
       case "join_session":
         if (this.role === "host") {
@@ -3451,6 +3865,11 @@ var SignalingClient = class {
       case "ice_candidate":
         if (msg.candidate) {
           this.callbacks.onIceCandidate?.(msg.candidate);
+        }
+        break;
+      case "cloud_transfer_offer":
+        if (msg.offer) {
+          this.callbacks.onCloudTransferOffer?.(msg.offer);
         }
         break;
       case "peer_left":
@@ -3524,18 +3943,27 @@ var SignalingClient = class {
       candidate
     });
   }
+  sendCloudTransferOffer(offer) {
+    this.send({
+      type: "cloud_transfer_offer",
+      offer
+    });
+  }
   leave() {
     this.send({ type: "peer_left" });
     this.close();
   }
   async send(payload) {
     if (!this.safeTopic) return;
-    const body = JSON.stringify({
+    const msg = {
       ...payload,
       sender: this.role,
       timestamp: Date.now()
+    };
+    SupabaseService.broadcastSignal(this.safeTopic, msg).catch(() => {
     });
     try {
+      const body = JSON.stringify(msg);
       const endpoint = CUSTOM_SIGNALING_URL ? CUSTOM_SIGNALING_URL.replace(/^ws/i, "http").replace(/\/+$/, "") + "/" + this.safeTopic : `https://ntfy.sh/${this.safeTopic}`;
       await fetch(endpoint, {
         method: "POST",
@@ -3561,6 +3989,7 @@ var SignalingClient = class {
     this.isExplicitlyClosed = true;
     this.stopHeartbeat();
     this.stopRetry();
+    SupabaseService.unsubscribeSignalingChannel(this.safeTopic);
     if (this.ws) {
       try {
         this.ws.close();
@@ -4037,7 +4466,8 @@ function App() {
   const [texts, setTexts] = useState7([]);
   const [incomingOffer, setIncomingOffer] = useState7(null);
   const [autoAccept, setAutoAccept] = useState7(() => {
-    return localStorage.getItem("quickdrop_auto_accept") === "true";
+    const saved = localStorage.getItem("quickdrop_auto_accept");
+    return saved !== null ? saved === "true" : true;
   });
   const signalingClientRef = useRef6(null);
   const webrtcManagerRef = useRef6(null);
@@ -4105,6 +4535,46 @@ function App() {
       }
     }).catch((err) => console.warn("Failed to fetch ICE servers:", err));
   }, []);
+  const autoSaveReceivedFile = useCallback(async (item) => {
+    if (!item.blobUrl) return;
+    if (typeof window !== "undefined" && "showSaveFilePicker" in window) {
+      try {
+        const ext = item.name.includes(".") ? "." + item.name.split(".").pop() : "";
+        const handle = await window.showSaveFilePicker({
+          suggestedName: item.name,
+          types: [
+            {
+              description: "QuickDrop Received File",
+              accept: {
+                [item.type || "application/octet-stream"]: ext ? [ext] : []
+              }
+            }
+          ]
+        });
+        const writable = await handle.createWritable();
+        const resp = await fetch(item.blobUrl);
+        const blob = await resp.blob();
+        await writable.write(blob);
+        await writable.close();
+        return;
+      } catch (err) {
+        if (err.name === "AbortError") {
+          return;
+        }
+        console.warn("showSaveFilePicker restricted without user gesture, falling back to direct download:", err);
+      }
+    }
+    try {
+      const a = document.createElement("a");
+      a.href = item.blobUrl;
+      a.download = item.name;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+    } catch (err) {
+      console.error("Anchor download error:", err);
+    }
+  }, []);
   const getOrCreateWebRTC = useCallback((isInitiator) => {
     if (webrtcManagerRef.current) {
       webrtcManagerRef.current.close();
@@ -4148,17 +4618,28 @@ function App() {
             setIncomingOffer(item);
           }
           setFiles((prev) => [item, ...prev.filter((f) => f.id !== item.id)]);
+          if (session?.sessionId) {
+            SupabaseService.recordTransfer(item, session.sessionId, "webrtc_p2p").catch(() => {
+            });
+          }
         },
         onFileProgress: (item) => {
           setFiles(
             (prev) => prev.map((f) => f.id === item.id ? { ...item } : f)
           );
         },
-        onFileCompleted: (item) => {
+        onFileCompleted: async (item) => {
           setIncomingOffer((current) => current?.id === item.id ? null : current);
           setFiles(
             (prev) => prev.map((f) => f.id === item.id ? { ...item } : f)
           );
+          if (session?.sessionId) {
+            SupabaseService.recordTransfer(item, session.sessionId, "webrtc_p2p").catch(() => {
+            });
+          }
+          if (item.isIncoming && item.blobUrl) {
+            await autoSaveReceivedFile(item);
+          }
         },
         onFileFailed: (itemId, error) => {
           setIncomingOffer((current) => current?.id === itemId ? null : current);
@@ -4173,7 +4654,7 @@ function App() {
     );
     webrtcManagerRef.current = manager;
     return manager;
-  }, [localDeviceInfo, autoAccept, connectionState]);
+  }, [localDeviceInfo, autoAccept, connectionState, session, autoSaveReceivedFile]);
   const handleStartSession = async () => {
     setIsCreatingSession(true);
     setConnectionState("creating");
@@ -4214,12 +4695,16 @@ function App() {
         sessionStorage.setItem("quickdrop_active_host_session", JSON.stringify(newSession));
       } catch {
       }
+      SupabaseService.recordSession(newSession, localDeviceInfo);
       const signaling = new SignalingClient({
         onRegistered: () => {
           setConnectionState("waiting");
         },
         onPeerJoined: async (peerInfo) => {
-          if (peerInfo) setPeerDeviceInfo(peerInfo);
+          if (peerInfo) {
+            setPeerDeviceInfo(peerInfo);
+            SupabaseService.updateSessionPeer(newSession.sessionId, peerInfo, "connected");
+          }
           setConnectionState("connecting");
           const rtc = getOrCreateWebRTC(true);
           await rtc.initializePeerConnection(true);
@@ -4236,6 +4721,43 @@ function App() {
             await webrtcManagerRef.current.handleReceivedIceCandidate(candidate);
           } else {
             pendingCandidatesRef.current.push(candidate);
+          }
+        },
+        onCloudTransferOffer: async (offer) => {
+          const item = {
+            id: offer.id,
+            name: offer.name,
+            size: offer.size,
+            type: offer.type,
+            lastModified: Date.now(),
+            progress: 30,
+            transferredBytes: Math.round(offer.size * 0.3),
+            speed: 0,
+            eta: 0,
+            state: "transferring",
+            isIncoming: true
+          };
+          setFiles((prev) => [item, ...prev.filter((f) => f.id !== item.id)]);
+          try {
+            const res = await fetch(offer.url);
+            const blob = await res.blob();
+            const blobUrl = URL.createObjectURL(blob);
+            const completedItem = {
+              ...item,
+              progress: 100,
+              transferredBytes: offer.size,
+              state: "completed",
+              blobUrl,
+              endTime: Date.now()
+            };
+            setFiles((prev) => prev.map((f) => f.id === offer.id ? completedItem : f));
+            SupabaseService.recordTransfer(completedItem, newSession.sessionId, "supabase_storage").catch(() => {
+            });
+            await autoSaveReceivedFile(completedItem);
+          } catch (err) {
+            setFiles(
+              (prev) => prev.map((f) => f.id === offer.id ? { ...f, state: "failed", error: err.message } : f)
+            );
           }
         },
         onPeerDisconnected: () => {
@@ -4269,8 +4791,8 @@ function App() {
     setConnectionState("connecting");
     try {
       let targetSessionId = "";
-      let targetToken = optionalToken || tokenOrCode;
-      let targetExpires = Date.now() + 15 * 60 * 1e3;
+      const targetToken = optionalToken || tokenOrCode;
+      const targetExpires = Date.now() + 15 * 60 * 1e3;
       const qkMatch = tokenOrCode.match(/QK-[A-Z0-9]{4}-[A-Z0-9]{4}/i);
       if (qkMatch) {
         targetSessionId = qkMatch[0].toUpperCase();
@@ -4288,6 +4810,7 @@ function App() {
       setSession(joinSessionData);
       setIsScannerOpen(false);
       setIsManualJoinOpen(false);
+      SupabaseService.updateSessionPeer(targetSessionId, localDeviceInfo, "connected");
       const signaling = new SignalingClient({
         onJoined: (_sid, hostInfo) => {
           if (hostInfo) setPeerDeviceInfo(hostInfo);
@@ -4307,6 +4830,43 @@ function App() {
             await webrtcManagerRef.current.handleReceivedIceCandidate(candidate);
           } else {
             pendingCandidatesRef.current.push(candidate);
+          }
+        },
+        onCloudTransferOffer: async (offer) => {
+          const item = {
+            id: offer.id,
+            name: offer.name,
+            size: offer.size,
+            type: offer.type,
+            lastModified: Date.now(),
+            progress: 30,
+            transferredBytes: Math.round(offer.size * 0.3),
+            speed: 0,
+            eta: 0,
+            state: "transferring",
+            isIncoming: true
+          };
+          setFiles((prev) => [item, ...prev.filter((f) => f.id !== item.id)]);
+          try {
+            const res = await fetch(offer.url);
+            const blob = await res.blob();
+            const blobUrl = URL.createObjectURL(blob);
+            const completedItem = {
+              ...item,
+              progress: 100,
+              transferredBytes: offer.size,
+              state: "completed",
+              blobUrl,
+              endTime: Date.now()
+            };
+            setFiles((prev) => prev.map((f) => f.id === offer.id ? completedItem : f));
+            SupabaseService.recordTransfer(completedItem, targetSessionId, "supabase_storage").catch(() => {
+            });
+            await autoSaveReceivedFile(completedItem);
+          } catch (err) {
+            setFiles(
+              (prev) => prev.map((f) => f.id === offer.id ? { ...f, state: "failed", error: err.message } : f)
+            );
           }
         },
         onPeerDisconnected: () => {
@@ -4355,7 +4915,10 @@ function App() {
             const signaling = new SignalingClient({
               onRegistered: () => setConnectionState("waiting"),
               onPeerJoined: async (peerInfo) => {
-                if (peerInfo) setPeerDeviceInfo(peerInfo);
+                if (peerInfo) {
+                  setPeerDeviceInfo(peerInfo);
+                  SupabaseService.updateSessionPeer(sessionObj.sessionId, peerInfo, "connected");
+                }
                 setConnectionState("connecting");
                 const rtc = getOrCreateWebRTC(true);
                 await rtc.initializePeerConnection(true);
@@ -4372,6 +4935,41 @@ function App() {
                   await webrtcManagerRef.current.handleReceivedIceCandidate(candidate);
                 } else {
                   pendingCandidatesRef.current.push(candidate);
+                }
+              },
+              onCloudTransferOffer: async (offer) => {
+                const item = {
+                  id: offer.id,
+                  name: offer.name,
+                  size: offer.size,
+                  type: offer.type,
+                  lastModified: Date.now(),
+                  progress: 30,
+                  transferredBytes: Math.round(offer.size * 0.3),
+                  speed: 0,
+                  eta: 0,
+                  state: "transferring",
+                  isIncoming: true
+                };
+                setFiles((prev) => [item, ...prev.filter((f) => f.id !== item.id)]);
+                try {
+                  const res = await fetch(offer.url);
+                  const blob = await res.blob();
+                  const blobUrl = URL.createObjectURL(blob);
+                  const completedItem = {
+                    ...item,
+                    progress: 100,
+                    transferredBytes: offer.size,
+                    state: "completed",
+                    blobUrl,
+                    endTime: Date.now()
+                  };
+                  setFiles((prev) => prev.map((f) => f.id === offer.id ? completedItem : f));
+                  await autoSaveReceivedFile(completedItem);
+                } catch (err) {
+                  setFiles(
+                    (prev) => prev.map((f) => f.id === offer.id ? { ...f, state: "failed", error: err.message } : f)
+                  );
                 }
               },
               onPeerDisconnected: () => setConnectionState("disconnected"),
@@ -4393,6 +4991,9 @@ function App() {
     }
   }, [currentUser]);
   const handleEndSession = () => {
+    if (session?.sessionId) {
+      SupabaseService.updateSessionPeer(session.sessionId, localDeviceInfo, "expired");
+    }
     try {
       sessionStorage.removeItem("quickdrop_active_host_session");
     } catch {
@@ -4415,6 +5016,69 @@ function App() {
     for (const file of filesArray) {
       const item = webrtcManagerRef.current.offerFileToSend(file);
       setFiles((prev) => [item, ...prev]);
+      if (session?.sessionId) {
+        SupabaseService.recordTransfer(item, session.sessionId, "webrtc_p2p").catch(() => {
+        });
+      }
+    }
+  };
+  const handleCloudUploadFallback = async (file) => {
+    if (!session?.sessionId) return;
+    const tempId = `cloud-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`;
+    const cloudItem = {
+      id: tempId,
+      name: file.name,
+      size: file.size,
+      type: file.type || "application/octet-stream",
+      lastModified: file.lastModified,
+      progress: 15,
+      transferredBytes: Math.round(file.size * 0.15),
+      speed: 0,
+      eta: 0,
+      state: "transferring",
+      isIncoming: false
+    };
+    setFiles((prev) => [cloudItem, ...prev]);
+    const res = await SupabaseService.uploadToStorageFallback(file, session.sessionId, (pct) => {
+      setFiles(
+        (prev) => prev.map(
+          (f) => f.id === tempId ? {
+            ...f,
+            progress: pct,
+            transferredBytes: Math.round(pct / 100 * file.size)
+          } : f
+        )
+      );
+    });
+    if (res.success && res.url) {
+      const completedItem = {
+        ...cloudItem,
+        progress: 100,
+        transferredBytes: file.size,
+        state: "completed",
+        blobUrl: res.url,
+        endTime: Date.now()
+      };
+      setFiles((prev) => prev.map((f) => f.id === tempId ? completedItem : f));
+      signalingClientRef.current?.sendCloudTransferOffer({
+        id: tempId,
+        name: file.name,
+        size: file.size,
+        type: file.type,
+        url: res.url
+      });
+      SupabaseService.recordTransfer(completedItem, session.sessionId, "supabase_storage", res.path).catch(() => {
+      });
+    } else {
+      setFiles(
+        (prev) => prev.map(
+          (f) => f.id === tempId ? {
+            ...f,
+            state: "failed",
+            error: res.error || "\u0641\u0634\u0644 \u0627\u0644\u0631\u0641\u0639 \u0625\u0644\u0649 Supabase Storage"
+          } : f
+        )
+      );
     }
   };
   const handleSendText = (text) => {
@@ -4536,7 +5200,9 @@ function App() {
             onRejectFile: handleRejectFile,
             onCancelTransfer: handleCancelTransfer,
             autoAccept,
-            onToggleAutoAccept: handleToggleAutoAccept
+            onToggleAutoAccept: handleToggleAutoAccept,
+            sessionRole: session?.role,
+            onUploadCloudFallback: handleCloudUploadFallback
           }
         ),
         connectionState === "disconnected" && /* @__PURE__ */ jsxs12("div", { className: "max-w-md mx-auto px-4 py-16 text-center space-y-4", children: [
@@ -4547,7 +5213,7 @@ function App() {
             "button",
             {
               onClick: handleEndSession,
-              className: "px-5 py-2.5 rounded-xl bg-blue-600 hover:bg-blue-700 text-white font-medium text-xs shadow-sm transition-colors",
+              className: "px-5 py-2.5 rounded-xl bg-blue-600 hover:bg-blue-700 text-white font-medium text-xs shadow-sm transition-colors cursor-pointer",
               id: "restart-after-disconnect-btn",
               children: "Start New Session"
             }
