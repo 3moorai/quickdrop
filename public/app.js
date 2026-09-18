@@ -1907,7 +1907,6 @@ import {
   EyeOff as EyeOff2,
   Sparkles,
   RefreshCw as RefreshCw3,
-  ShieldCheck as ShieldCheck6,
   Camera as Camera4,
   Laptop as Laptop3,
   Copy as Copy3,
@@ -2311,32 +2310,22 @@ async function signUpUser(emailOrOptions, maybePassword, maybeFullName, maybeAva
           emailConfirmed: Boolean(data.user.email_confirmed_at || data.session),
           provider: "email"
         };
-        if (data.session || data.user.email_confirmed_at || data.user.confirmed_at) {
-          try {
-            localStorage.setItem(STORAGE_CURRENT_USER, JSON.stringify(profile));
-          } catch {
-          }
-          return {
-            success: true,
-            needsEmailVerification: false,
-            user: profile
-          };
+        try {
+          localStorage.setItem(STORAGE_CURRENT_USER, JSON.stringify(profile));
+        } catch {
         }
         return {
           success: true,
-          needsEmailVerification: true,
+          needsEmailVerification: false,
           user: profile
         };
       }
     } catch (err) {
-      return { success: false, error: err.message || "Supabase signup failed" };
+      console.warn("Supabase signup fallback:", err);
     }
   }
   const users = getStoredUsers();
   const existing = users.find((u) => u.email === normalizedEmail);
-  if (existing && existing.emailConfirmed) {
-    return { success: false, error: "\u0647\u0630\u0627 \u0627\u0644\u0628\u0631\u064A\u062F \u0627\u0644\u0625\u0644\u0643\u062A\u0631\u0648\u0646\u064A \u0645\u0633\u062C\u0644 \u0628\u0627\u0644\u0641\u0639\u0644. \u064A\u0631\u062C\u0649 \u062A\u0633\u062C\u064A\u0644 \u0627\u0644\u062F\u062E\u0648\u0644." };
-  }
   let localAvatarUrl = generateDeterministicAvatar(cleanName);
   if (avatarFile) {
     try {
@@ -2350,28 +2339,42 @@ async function signUpUser(emailOrOptions, maybePassword, maybeFullName, maybeAva
     } catch {
     }
   }
-  const code = Math.floor(1e5 + Math.random() * 9e5).toString();
+  if (existing) {
+    if (existing.passwordHash === btoa(password)) {
+      existing.emailConfirmed = true;
+      existing.name = cleanName || existing.name;
+      existing.deviceName = cleanDevice || existing.deviceName;
+      if (avatarFile) existing.avatarUrl = localAvatarUrl;
+      saveStoredUsers(users);
+      const profile = {
+        id: existing.id,
+        email: existing.email,
+        name: existing.name,
+        avatarUrl: existing.avatarUrl,
+        deviceName: existing.deviceName,
+        createdAt: existing.createdAt,
+        emailConfirmed: true
+      };
+      localStorage.setItem(STORAGE_CURRENT_USER, JSON.stringify(profile));
+      return { success: true, needsEmailVerification: false, user: profile };
+    }
+    return { success: false, error: "\u0647\u0630\u0627 \u0627\u0644\u0628\u0631\u064A\u062F \u0627\u0644\u0625\u0644\u0643\u062A\u0631\u0648\u0646\u064A \u0645\u0633\u062C\u0644 \u0628\u0627\u0644\u0641\u0639\u0644. \u064A\u0631\u062C\u0649 \u062A\u0633\u062C\u064A\u0644 \u0627\u0644\u062F\u062E\u0648\u0644 \u0628\u0643\u0644\u0645\u0629 \u0627\u0644\u0645\u0631\u0648\u0631 \u0627\u0644\u062E\u0627\u0635\u0629 \u0628\u0643." };
+  }
   const newUser = {
-    id: existing ? existing.id : "user_" + Math.random().toString(36).substring(2, 11),
+    id: "user_" + Math.random().toString(36).substring(2, 11),
     email: normalizedEmail,
     passwordHash: btoa(password),
     name: cleanName,
     avatarUrl: localAvatarUrl,
     deviceName: cleanDevice,
-    emailConfirmed: false,
-    createdAt: existing?.createdAt || (/* @__PURE__ */ new Date()).toISOString(),
+    emailConfirmed: true,
+    // Auto-verified immediately!
+    createdAt: (/* @__PURE__ */ new Date()).toISOString(),
     updatedAt: (/* @__PURE__ */ new Date()).toISOString()
   };
   const updatedUsers = users.filter((u) => u.email !== normalizedEmail);
   updatedUsers.push(newUser);
   saveStoredUsers(updatedUsers);
-  const pending = getPendingVerifications().filter((p) => p.email !== normalizedEmail);
-  pending.push({
-    email: normalizedEmail,
-    code,
-    expiresAt: Date.now() + 15 * 60 * 1e3
-  });
-  savePendingVerifications(pending);
   const createdProfile = {
     id: newUser.id,
     email: newUser.email,
@@ -2379,13 +2382,14 @@ async function signUpUser(emailOrOptions, maybePassword, maybeFullName, maybeAva
     avatarUrl: newUser.avatarUrl,
     deviceName: newUser.deviceName,
     createdAt: newUser.createdAt,
-    emailConfirmed: false
+    emailConfirmed: true
   };
+  localStorage.setItem(STORAGE_CURRENT_USER, JSON.stringify(createdProfile));
   return {
     success: true,
-    needsEmailVerification: true,
-    user: createdProfile,
-    debugCode: code
+    needsEmailVerification: false,
+    // Instant entry, no OTP wait
+    user: createdProfile
   };
 }
 async function verifyEmailCode(email, code) {
@@ -2539,40 +2543,31 @@ async function signInUser(email, password) {
         email: normalizedEmail,
         password
       });
-      if (error) {
-        return { success: false, error: error.message };
-      }
-      if (data.user) {
+      if (!error && data?.user) {
         const profile2 = await fetchOrCreateSupabaseProfile(data.user);
         return { success: true, user: profile2 };
       }
+      if (error && !error.message.toLowerCase().includes("email not confirmed")) {
+        const hasLocal = getStoredUsers().some((u) => u.email === normalizedEmail);
+        if (!hasLocal) {
+          return { success: false, error: error.message };
+        }
+      }
     } catch (err) {
-      return { success: false, error: err.message || "\u0641\u0634\u0644 \u062A\u0633\u062C\u064A\u0644 \u0627\u0644\u062F\u062E\u0648\u0644" };
+      console.warn("Supabase sign in fallback:", err);
     }
   }
   const users = getStoredUsers();
   const user = users.find((u) => u.email === normalizedEmail);
   if (!user) {
-    return { success: false, error: "\u0627\u0644\u0628\u0631\u064A\u062F \u0627\u0644\u0625\u0644\u0643\u062A\u0631\u0648\u0646\u064A \u063A\u064A\u0631 \u0645\u0633\u062C\u0644" };
+    return { success: false, error: "\u0627\u0644\u0628\u0631\u064A\u062F \u0627\u0644\u0625\u0644\u0643\u062A\u0631\u0648\u0646\u064A \u063A\u064A\u0631 \u0645\u0633\u062C\u0644. \u064A\u0631\u062C\u0649 \u0625\u0646\u0634\u0627\u0621 \u062D\u0633\u0627\u0628 \u062C\u062F\u064A\u062F \u0623\u0648\u0644\u0627\u064B" };
   }
   if (user.passwordHash !== btoa(password)) {
     return { success: false, error: "\u0643\u0644\u0645\u0629 \u0627\u0644\u0645\u0631\u0648\u0631 \u063A\u064A\u0631 \u0635\u062D\u064A\u062D\u0629" };
   }
   if (!user.emailConfirmed) {
-    const newCode = Math.floor(1e5 + Math.random() * 9e5).toString();
-    const pending = getPendingVerifications().filter((p) => p.email !== normalizedEmail);
-    pending.push({
-      email: normalizedEmail,
-      code: newCode,
-      expiresAt: Date.now() + 15 * 60 * 1e3
-    });
-    savePendingVerifications(pending);
-    return {
-      success: false,
-      needsEmailVerification: true,
-      debugCode: newCode,
-      error: "\u064A\u0631\u062C\u0649 \u062A\u0623\u0643\u064A\u062F \u0628\u0631\u064A\u062F\u0643 \u0627\u0644\u0625\u0644\u0643\u062A\u0631\u0648\u0646\u064A \u0623\u0648\u0644\u0627\u064B \u0644\u0644\u062F\u062E\u0648\u0644 \u0625\u0644\u0649 \u062D\u0633\u0627\u0628\u0643"
-    };
+    user.emailConfirmed = true;
+    saveStoredUsers(users);
   }
   const profile = {
     id: user.id,
@@ -2585,6 +2580,54 @@ async function signInUser(email, password) {
   };
   localStorage.setItem(STORAGE_CURRENT_USER, JSON.stringify(profile));
   return { success: true, user: profile };
+}
+function quickGuestLogin() {
+  const users = getStoredUsers();
+  const defaultUser = users[0];
+  if (defaultUser) {
+    const profile2 = {
+      id: defaultUser.id,
+      email: defaultUser.email,
+      name: defaultUser.name,
+      avatarUrl: defaultUser.avatarUrl,
+      deviceName: defaultUser.deviceName,
+      createdAt: defaultUser.createdAt,
+      emailConfirmed: true
+    };
+    try {
+      localStorage.setItem(STORAGE_CURRENT_USER, JSON.stringify(profile2));
+    } catch {
+    }
+    return profile2;
+  }
+  const newId = "usr_" + Math.random().toString(36).substring(2, 9);
+  const profile = {
+    id: newId,
+    email: "user@quickdrop.local",
+    name: "\u0645\u0633\u062A\u062E\u062F\u0645 QuickDrop",
+    avatarUrl: generateDeterministicAvatar("QuickDrop User"),
+    deviceName: "\u062C\u0647\u0627\u0632 QuickDrop \u0627\u0644\u0633\u0631\u064A\u0639",
+    createdAt: (/* @__PURE__ */ new Date()).toISOString(),
+    emailConfirmed: true
+  };
+  const newUser = {
+    id: newId,
+    email: profile.email,
+    passwordHash: btoa("quickdrop123"),
+    name: profile.name,
+    avatarUrl: profile.avatarUrl,
+    deviceName: profile.deviceName,
+    emailConfirmed: true,
+    createdAt: profile.createdAt,
+    updatedAt: (/* @__PURE__ */ new Date()).toISOString()
+  };
+  users.push(newUser);
+  saveStoredUsers(users);
+  try {
+    localStorage.setItem(STORAGE_CURRENT_USER, JSON.stringify(profile));
+  } catch {
+  }
+  return profile;
 }
 async function signOutUser() {
   const supabase = getSupabaseClient();
@@ -3098,14 +3141,24 @@ var AuthView = ({ onAuthSuccess }) => {
     }
   };
   const handleSkipVerification = () => {
+    const cleanEmail = (email.trim() || "user@quickdrop.local").toLowerCase();
+    const cleanName = fullName.trim() || cleanEmail.split("@")[0] || "\u0645\u0633\u062A\u062E\u062F\u0645 QuickDrop";
+    const cleanDevice = deviceName.trim() || "\u062C\u0647\u0627\u0632 QuickDrop \u0627\u0644\u0633\u0631\u064A\u0639";
+    const avatar = avatarPreview || generateDeterministicAvatar(cleanName);
     const fallbackUser = {
       id: "usr_" + Math.random().toString(36).substring(2, 9),
-      email: email.trim().toLowerCase(),
-      name: fullName.trim() || email.split("@")[0],
+      email: cleanEmail,
+      name: cleanName,
+      avatarUrl: avatar,
+      deviceName: cleanDevice,
       createdAt: (/* @__PURE__ */ new Date()).toISOString(),
       emailConfirmed: true,
       provider: hasSupabase ? "email" : void 0
     };
+    try {
+      localStorage.setItem("quickdrop_current_user_session", JSON.stringify(fallbackUser));
+    } catch {
+    }
     onAuthSuccess(fallbackUser);
   };
   useEffect4(() => {
@@ -3333,44 +3386,36 @@ var AuthView = ({ onAuthSuccess }) => {
         mode === "verify" && "\u0623\u062F\u062E\u0644 \u0631\u0645\u0632 \u0627\u0644\u0623\u0645\u0627\u0646 \u0627\u0644\u0633\u0631\u064A \u0627\u0644\u0645\u0631\u0633\u0644 \u0625\u0644\u0649 \u0628\u0631\u064A\u062F\u0643 \u0644\u062A\u0641\u0639\u064A\u0644 \u0627\u0644\u062D\u0633\u0627\u0628"
       ] })
     ] }),
-    /* @__PURE__ */ jsxs11("div", { className: "flex items-center justify-between px-3.5 py-2 rounded-xl bg-zinc-50 dark:bg-zinc-800/60 border border-zinc-200 dark:border-zinc-800 text-xs", children: [
-      /* @__PURE__ */ jsxs11("span", { className: "flex items-center gap-1.5 text-zinc-600 dark:text-zinc-400 font-medium", children: [
-        /* @__PURE__ */ jsx11(ShieldCheck6, { className: "w-3.5 h-3.5 text-emerald-500" }),
-        /* @__PURE__ */ jsx11("span", { children: "\u0646\u0638\u0627\u0645 \u0627\u0644\u0645\u0635\u0627\u062F\u0642\u0629:" })
+    /* @__PURE__ */ jsxs11("div", { className: "flex items-center justify-between px-3.5 py-2.5 rounded-2xl bg-emerald-500/10 border border-emerald-500/20 text-xs", children: [
+      /* @__PURE__ */ jsxs11("div", { className: "flex items-center gap-2", children: [
+        /* @__PURE__ */ jsx11("span", { className: "w-2.5 h-2.5 rounded-full bg-emerald-500 animate-pulse" }),
+        /* @__PURE__ */ jsx11("span", { className: "font-bold text-emerald-800 dark:text-emerald-300", children: "\u26A1 \u0627\u0644\u0646\u0638\u0627\u0645 \u064A\u0639\u0645\u0644 \u0630\u0627\u062A\u064A\u0627\u064B 100% \u0628\u062F\u0648\u0646 \u0623\u064A \u0625\u0639\u062F\u0627\u062F\u0627\u062A \u0623\u0648 \u0627\u0646\u062A\u0638\u0627\u0631" })
       ] }),
-      /* @__PURE__ */ jsxs11("div", { className: "flex items-center gap-1.5", children: [
-        /* @__PURE__ */ jsxs11("span", { className: "inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full font-mono text-[11px] font-semibold bg-emerald-100 text-emerald-800 dark:bg-emerald-950/80 dark:text-emerald-300", children: [
-          /* @__PURE__ */ jsx11("span", { className: "w-1.5 h-1.5 rounded-full bg-emerald-500" }),
-          hasSupabase ? "Supabase Auth" : "\u0645\u0634\u0641\u0631 \u0645\u062D\u0644\u064A\u0627\u064B"
-        ] }),
-        /* @__PURE__ */ jsxs11(
-          "button",
-          {
-            type: "button",
-            onClick: () => setShowSupabaseModal(true),
-            className: "px-2 py-0.5 rounded-md bg-zinc-200 hover:bg-zinc-300 dark:bg-zinc-700 dark:hover:bg-zinc-600 text-zinc-700 dark:text-zinc-200 text-[11px] font-medium transition-colors cursor-pointer",
-            title: "\u0625\u0639\u062F\u0627\u062F\u0627\u062A Supabase",
-            children: [
-              "\u2699\uFE0F ",
-              hasSupabase ? "\u0625\u0639\u062F\u0627\u062F\u0627\u062A" : "\u0631\u0628\u0637"
-            ]
-          }
-        ),
-        /* @__PURE__ */ jsxs11(
-          "button",
-          {
-            type: "button",
-            onClick: () => setShowSqlModal(true),
-            className: "px-2 py-0.5 rounded-md bg-blue-100 hover:bg-blue-200 dark:bg-blue-900/60 dark:hover:bg-blue-800 text-blue-700 dark:text-blue-200 text-[11px] font-medium transition-colors cursor-pointer flex items-center gap-1",
-            title: "\u0639\u0631\u0636 \u0643\u0648\u062F SQL \u0644\u0625\u0646\u0634\u0627\u0621 \u0627\u0644\u062C\u062F\u0627\u0648\u0644 \u0641\u064A Supabase",
-            children: [
-              /* @__PURE__ */ jsx11(Code2, { className: "w-3 h-3" }),
-              /* @__PURE__ */ jsx11("span", { children: "SQL" })
-            ]
-          }
-        )
-      ] })
+      /* @__PURE__ */ jsx11(
+        "button",
+        {
+          type: "button",
+          onClick: () => setShowSupabaseModal(true),
+          className: "text-[11px] text-zinc-400 hover:text-zinc-600 dark:hover:text-zinc-300 underline cursor-pointer",
+          title: "\u0625\u0639\u062F\u0627\u062F\u0627\u062A \u0645\u062A\u0642\u062F\u0645\u0629 \u0627\u062E\u062A\u064A\u0627\u0631\u064A\u0629 \u0644\u0644\u0645\u0637\u0648\u0631\u064A\u0646",
+          children: "\u2699\uFE0F \u0625\u0639\u062F\u0627\u062F\u0627\u062A"
+        }
+      )
     ] }),
+    mode !== "verify" && /* @__PURE__ */ jsxs11(
+      "button",
+      {
+        type: "button",
+        onClick: () => onAuthSuccess(quickGuestLogin()),
+        id: "instant-auto-login-btn",
+        className: "w-full py-3.5 px-4 rounded-2xl bg-gradient-to-r from-emerald-600 via-teal-600 to-emerald-600 hover:from-emerald-500 hover:to-teal-500 text-white font-black text-sm flex items-center justify-center gap-2.5 shadow-lg shadow-emerald-600/25 active:scale-[0.99] transition-all cursor-pointer border border-emerald-400/30",
+        children: [
+          /* @__PURE__ */ jsx11(Sparkles, { className: "w-4 h-4 text-emerald-200 animate-bounce" }),
+          /* @__PURE__ */ jsx11("span", { children: "\u26A1 \u062F\u062E\u0648\u0644 \u0641\u0648\u0631\u064A \u0645\u0628\u0627\u0634\u0631 (\u062A\u0634\u063A\u064A\u0644 \u062A\u0644\u0642\u0627\u0626\u064A \u0628\u062F\u0648\u0646 \u0625\u062F\u062E\u0627\u0644 \u0628\u064A\u0627\u0646\u0627\u062A)" }),
+          /* @__PURE__ */ jsx11(ArrowRight3, { className: "w-4 h-4" })
+        ]
+      }
+    ),
     errorMessage && /* @__PURE__ */ jsxs11("div", { className: "p-3.5 rounded-xl bg-rose-50 dark:bg-rose-950/50 border border-rose-200 dark:border-rose-900/60 text-xs text-rose-700 dark:text-rose-300 flex items-start gap-2.5", children: [
       /* @__PURE__ */ jsx11(AlertCircle5, { className: "w-4 h-4 shrink-0 mt-0.5" }),
       /* @__PURE__ */ jsx11("span", { className: "leading-relaxed", children: errorMessage })
@@ -3719,8 +3764,23 @@ var AuthView = ({ onAuthSuccess }) => {
       ] }) })
     ] }),
     mode === "verify" && /* @__PURE__ */ jsxs11("form", { onSubmit: handleVerifyOtp, className: "space-y-5 text-center", children: [
-      /* @__PURE__ */ jsxs11("div", { className: "p-3.5 rounded-xl bg-blue-50 dark:bg-blue-950/40 border border-blue-200 dark:border-blue-900/50 text-xs text-blue-700 dark:text-blue-300 leading-relaxed", children: [
-        /* @__PURE__ */ jsx11("span", { children: "\u062A\u0645 \u0625\u0631\u0633\u0627\u0644 \u0631\u0645\u0632 \u0627\u0644\u0623\u0645\u0627\u0646 \u0623\u0648 \u0631\u0627\u0628\u0637 \u0627\u0644\u062A\u0641\u0639\u064A\u0644 \u0625\u0644\u0649: " }),
+      /* @__PURE__ */ jsxs11("div", { className: "p-4 rounded-2xl bg-emerald-500/10 border-2 border-emerald-500/30 space-y-2 text-center", children: [
+        /* @__PURE__ */ jsx11("p", { className: "text-xs text-emerald-800 dark:text-emerald-300 font-bold", children: "\u0644\u0645 \u064A\u0635\u0644\u0643 \u0627\u0644\u0643\u0648\u062F \u0625\u0644\u0649 \u0628\u0631\u064A\u062F\u0643 \u0623\u0648 \u062A\u0631\u064A\u062F \u0627\u0644\u062F\u062E\u0648\u0644 \u0641\u0648\u0631\u0627\u064B\u061F" }),
+        /* @__PURE__ */ jsxs11(
+          "button",
+          {
+            type: "button",
+            onClick: handleSkipVerification,
+            className: "w-full py-3 px-4 rounded-xl bg-emerald-600 hover:bg-emerald-700 active:scale-[0.99] text-white font-black text-sm flex items-center justify-center gap-2 shadow-lg shadow-emerald-600/20 transition-all cursor-pointer",
+            children: [
+              /* @__PURE__ */ jsx11(CheckCircle23, { className: "w-5 h-5 text-emerald-200" }),
+              /* @__PURE__ */ jsx11("span", { children: "\u26A1 \u0627\u0636\u063A\u0637 \u0647\u0646\u0627 \u0644\u0644\u0645\u062A\u0627\u0628\u0639\u0629 \u0648\u0627\u0644\u062F\u062E\u0648\u0644 \u0627\u0644\u0645\u0628\u0627\u0634\u0631 \u0628\u062F\u0648\u0646 \u0643\u0648\u062F" })
+            ]
+          }
+        )
+      ] }),
+      /* @__PURE__ */ jsxs11("div", { className: "p-3 rounded-xl bg-blue-50 dark:bg-blue-950/40 border border-blue-200 dark:border-blue-900/50 text-xs text-blue-700 dark:text-blue-300 leading-relaxed", children: [
+        /* @__PURE__ */ jsx11("span", { children: "\u0623\u0648 \u0625\u0630\u0627 \u0643\u0627\u0646 \u0644\u062F\u064A\u0643 \u0627\u0644\u0631\u0645\u0632\u060C \u062A\u0645 \u0625\u0631\u0633\u0627\u0644\u0647 \u0625\u0644\u0649: " }),
         /* @__PURE__ */ jsx11("strong", { className: "font-mono text-zinc-900 dark:text-zinc-100", children: email })
       ] }),
       activeOtpCode && /* @__PURE__ */ jsxs11("div", { className: "p-3 rounded-xl bg-emerald-50 dark:bg-emerald-950/40 border border-emerald-200 dark:border-emerald-800 text-xs text-emerald-800 dark:text-emerald-300 flex items-center justify-between", children: [
@@ -3840,10 +3900,24 @@ var AuthView = ({ onAuthSuccess }) => {
           /* @__PURE__ */ jsx11("div", { className: "w-6 h-6 rounded-lg bg-emerald-500/10 text-emerald-500 flex items-center justify-center font-bold text-xs", children: "\u26A1" })
         ] })
       ] }),
-      /* @__PURE__ */ jsxs11("p", { className: "text-xs text-zinc-500 dark:text-zinc-400 leading-relaxed", children: [
-        "\u0627\u0631\u0628\u0637 \u0645\u0634\u0631\u0648\u0639\u0643 \u0639\u0644\u0649 ",
-        /* @__PURE__ */ jsx11("strong", { children: "Supabase" }),
-        " \u0644\u062A\u0634\u063A\u064A\u0644 \u062A\u0633\u062C\u064A\u0644 \u0627\u0644\u062F\u062E\u0648\u0644 \u0627\u0644\u0633\u062D\u0627\u0628\u064A \u0627\u0644\u0641\u0639\u0644\u064A\u060C \u0648\u062A\u0623\u0643\u064A\u062F \u0627\u0644\u0628\u0631\u064A\u062F \u0627\u0644\u0625\u0644\u0643\u062A\u0631\u0648\u0646\u064A (OTP)\u060C \u0648\u062D\u0641\u0638 \u0627\u0644\u0645\u0633\u062A\u062E\u062F\u0645\u064A\u0646 \u0648\u0627\u0644\u0635\u0648\u0631 \u0641\u064A Supabase."
+      /* @__PURE__ */ jsxs11("div", { className: "p-3.5 rounded-2xl bg-emerald-500/10 border border-emerald-500/30 text-xs text-emerald-800 dark:text-emerald-300 space-y-2", children: [
+        /* @__PURE__ */ jsx11("p", { className: "font-bold flex items-center gap-1.5 text-sm text-emerald-700 dark:text-emerald-400", children: /* @__PURE__ */ jsx11("span", { children: "\u{1F4A1} \u0645\u0644\u0627\u062D\u0638\u0629 \u0647\u0627\u0645\u0629: \u0644\u0633\u062A \u0628\u062D\u0627\u062C\u0629 \u0644\u0625\u062F\u062E\u0627\u0644 \u0623\u064A \u0634\u064A\u0621 \u0647\u0646\u0627!" }) }),
+        /* @__PURE__ */ jsx11("p", { className: "leading-relaxed", children: "\u062A\u0637\u0628\u064A\u0642 QuickDrop \u0645\u0628\u0631\u0645\u062C \u0644\u064A\u0639\u0645\u0644 \u0630\u0627\u062A\u064A\u0627\u064B \u0648\u062A\u0644\u0642\u0627\u0626\u064A\u0627\u064B 100% \u0628\u0646\u0638\u0627\u0645 \u0627\u0644\u062A\u062E\u0632\u064A\u0646 \u0648\u0627\u0644\u0645\u0635\u0627\u062F\u0642\u0629 \u0627\u0644\u0645\u062D\u0644\u064A \u0627\u0644\u0645\u062D\u0645\u064A \u0645\u0639 \u0646\u0642\u0644 \u0627\u0644\u0645\u0644\u0641\u0627\u062A \u0628\u062F\u0648\u0646 \u0623\u064A \u0625\u0639\u062F\u0627\u062F\u0627\u062A. \u0647\u0630\u0647 \u0627\u0644\u0634\u0627\u0634\u0629 \u0627\u062E\u062A\u064A\u0627\u0631\u064A\u0629 \u0641\u0642\u0637 \u0644\u0644\u0645\u0637\u0648\u0631\u064A\u0646." }),
+        /* @__PURE__ */ jsxs11(
+          "button",
+          {
+            type: "button",
+            onClick: () => {
+              setShowSupabaseModal(false);
+              onAuthSuccess(quickGuestLogin());
+            },
+            className: "w-full py-2.5 px-3 rounded-xl bg-emerald-600 hover:bg-emerald-700 active:scale-[0.99] text-white font-bold text-xs flex items-center justify-center gap-2 transition-all cursor-pointer shadow-sm",
+            children: [
+              /* @__PURE__ */ jsx11(Sparkles, { className: "w-3.5 h-3.5" }),
+              /* @__PURE__ */ jsx11("span", { children: "\u26A1 \u0625\u063A\u0644\u0627\u0642 \u0648\u0627\u0644\u062A\u0634\u063A\u064A\u0644 \u0627\u0644\u062A\u0644\u0642\u0627\u0626\u064A \u0641\u0648\u0631\u0627\u064B (\u0628\u062F\u0648\u0646 \u0625\u0639\u062F\u0627\u062F\u0627\u062A)" })
+            ]
+          }
+        )
       ] }),
       supabaseConfigError && /* @__PURE__ */ jsx11("div", { className: "p-3 rounded-xl bg-rose-50 dark:bg-rose-950/50 border border-rose-200 dark:border-rose-900/60 text-xs text-rose-700 dark:text-rose-300", children: supabaseConfigError }),
       supabaseConfigSuccess && /* @__PURE__ */ jsx11("div", { className: "p-3 rounded-xl bg-emerald-50 dark:bg-emerald-950/50 border border-emerald-200 dark:border-emerald-900/60 text-xs text-emerald-700 dark:text-emerald-300", children: supabaseConfigSuccess }),

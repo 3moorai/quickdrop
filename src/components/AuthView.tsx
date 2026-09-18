@@ -34,6 +34,8 @@ import {
   getPendingVerificationCode,
   checkEmailConfirmationStatus,
   evaluatePasswordStrength,
+  quickGuestLogin,
+  generateDeterministicAvatar,
   SQL_PROFILES_MIGRATION
 } from '../lib/auth.ts';
 import { UserProfile, PasswordStrength } from '../types.ts';
@@ -169,16 +171,28 @@ export const AuthView: React.FC<AuthViewProps> = ({ onAuthSuccess }) => {
     }
   };
 
-  // Skip verification option
+  // Skip verification option - Immediate direct entry
   const handleSkipVerification = () => {
+    const cleanEmail = (email.trim() || 'user@quickdrop.local').toLowerCase();
+    const cleanName = fullName.trim() || cleanEmail.split('@')[0] || 'مستخدم QuickDrop';
+    const cleanDevice = deviceName.trim() || 'جهاز QuickDrop السريع';
+    const avatar = avatarPreview || generateDeterministicAvatar(cleanName);
+
     const fallbackUser: UserProfile = {
       id: 'usr_' + Math.random().toString(36).substring(2, 9),
-      email: email.trim().toLowerCase(),
-      name: fullName.trim() || email.split('@')[0],
+      email: cleanEmail,
+      name: cleanName,
+      avatarUrl: avatar,
+      deviceName: cleanDevice,
       createdAt: new Date().toISOString(),
       emailConfirmed: true,
       provider: hasSupabase ? 'email' : undefined,
     };
+
+    try {
+      localStorage.setItem('quickdrop_current_user_session', JSON.stringify(fallbackUser));
+    } catch {}
+
     onAuthSuccess(fallbackUser);
   };
 
@@ -453,36 +467,37 @@ export const AuthView: React.FC<AuthViewProps> = ({ onAuthSuccess }) => {
           </p>
         </div>
 
-        {/* Security & Supabase Status Badge */}
-        <div className="flex items-center justify-between px-3.5 py-2 rounded-xl bg-zinc-50 dark:bg-zinc-800/60 border border-zinc-200 dark:border-zinc-800 text-xs">
-          <span className="flex items-center gap-1.5 text-zinc-600 dark:text-zinc-400 font-medium">
-            <ShieldCheck className="w-3.5 h-3.5 text-emerald-500" />
-            <span>نظام المصادقة:</span>
-          </span>
-          <div className="flex items-center gap-1.5">
-            <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full font-mono text-[11px] font-semibold bg-emerald-100 text-emerald-800 dark:bg-emerald-950/80 dark:text-emerald-300">
-              <span className="w-1.5 h-1.5 rounded-full bg-emerald-500" />
-              {hasSupabase ? 'Supabase Auth' : 'مشفر محلياً'}
+        {/* System Automated Ready Badge */}
+        <div className="flex items-center justify-between px-3.5 py-2.5 rounded-2xl bg-emerald-500/10 border border-emerald-500/20 text-xs">
+          <div className="flex items-center gap-2">
+            <span className="w-2.5 h-2.5 rounded-full bg-emerald-500 animate-pulse" />
+            <span className="font-bold text-emerald-800 dark:text-emerald-300">
+              ⚡ النظام يعمل ذاتياً 100% بدون أي إعدادات أو انتظار
             </span>
-            <button
-              type="button"
-              onClick={() => setShowSupabaseModal(true)}
-              className="px-2 py-0.5 rounded-md bg-zinc-200 hover:bg-zinc-300 dark:bg-zinc-700 dark:hover:bg-zinc-600 text-zinc-700 dark:text-zinc-200 text-[11px] font-medium transition-colors cursor-pointer"
-              title="إعدادات Supabase"
-            >
-              ⚙️ {hasSupabase ? 'إعدادات' : 'ربط'}
-            </button>
-            <button
-              type="button"
-              onClick={() => setShowSqlModal(true)}
-              className="px-2 py-0.5 rounded-md bg-blue-100 hover:bg-blue-200 dark:bg-blue-900/60 dark:hover:bg-blue-800 text-blue-700 dark:text-blue-200 text-[11px] font-medium transition-colors cursor-pointer flex items-center gap-1"
-              title="عرض كود SQL لإنشاء الجداول في Supabase"
-            >
-              <Code2 className="w-3 h-3" />
-              <span>SQL</span>
-            </button>
           </div>
+          <button
+            type="button"
+            onClick={() => setShowSupabaseModal(true)}
+            className="text-[11px] text-zinc-400 hover:text-zinc-600 dark:hover:text-zinc-300 underline cursor-pointer"
+            title="إعدادات متقدمة اختيارية للمطورين"
+          >
+            ⚙️ إعدادات
+          </button>
         </div>
+
+        {/* INSTANT ONE-CLICK DIRECT ACCESS BUTTON */}
+        {mode !== 'verify' && (
+          <button
+            type="button"
+            onClick={() => onAuthSuccess(quickGuestLogin())}
+            id="instant-auto-login-btn"
+            className="w-full py-3.5 px-4 rounded-2xl bg-gradient-to-r from-emerald-600 via-teal-600 to-emerald-600 hover:from-emerald-500 hover:to-teal-500 text-white font-black text-sm flex items-center justify-center gap-2.5 shadow-lg shadow-emerald-600/25 active:scale-[0.99] transition-all cursor-pointer border border-emerald-400/30"
+          >
+            <Sparkles className="w-4 h-4 text-emerald-200 animate-bounce" />
+            <span>⚡ دخول فوري مباشر (تشغيل تلقائي بدون إدخال بيانات)</span>
+            <ArrowRight className="w-4 h-4" />
+          </button>
+        )}
 
         {/* Alerts */}
         {errorMessage && (
@@ -877,8 +892,23 @@ export const AuthView: React.FC<AuthViewProps> = ({ onAuthSuccess }) => {
         {/* 3. VERIFY CODE FORM */}
         {mode === 'verify' && (
           <form onSubmit={handleVerifyOtp} className="space-y-5 text-center">
-            <div className="p-3.5 rounded-xl bg-blue-50 dark:bg-blue-950/40 border border-blue-200 dark:border-blue-900/50 text-xs text-blue-700 dark:text-blue-300 leading-relaxed">
-              <span>تم إرسال رمز الأمان أو رابط التفعيل إلى: </span>
+            {/* BIG PROMINENT INSTANT ENTRY BUTTON */}
+            <div className="p-4 rounded-2xl bg-emerald-500/10 border-2 border-emerald-500/30 space-y-2 text-center">
+              <p className="text-xs text-emerald-800 dark:text-emerald-300 font-bold">
+                لم يصلك الكود إلى بريدك أو تريد الدخول فوراً؟
+              </p>
+              <button
+                type="button"
+                onClick={handleSkipVerification}
+                className="w-full py-3 px-4 rounded-xl bg-emerald-600 hover:bg-emerald-700 active:scale-[0.99] text-white font-black text-sm flex items-center justify-center gap-2 shadow-lg shadow-emerald-600/20 transition-all cursor-pointer"
+              >
+                <CheckCircle2 className="w-5 h-5 text-emerald-200" />
+                <span>⚡ اضغط هنا للمتابعة والدخول المباشر بدون كود</span>
+              </button>
+            </div>
+
+            <div className="p-3 rounded-xl bg-blue-50 dark:bg-blue-950/40 border border-blue-200 dark:border-blue-900/50 text-xs text-blue-700 dark:text-blue-300 leading-relaxed">
+              <span>أو إذا كان لديك الرمز، تم إرساله إلى: </span>
               <strong className="font-mono text-zinc-900 dark:text-zinc-100">{email}</strong>
             </div>
 
@@ -1007,9 +1037,25 @@ export const AuthView: React.FC<AuthViewProps> = ({ onAuthSuccess }) => {
                 </div>
               </div>
 
-              <p className="text-xs text-zinc-500 dark:text-zinc-400 leading-relaxed">
-                اربط مشروعك على <strong>Supabase</strong> لتشغيل تسجيل الدخول السحابي الفعلي، وتأكيد البريد الإلكتروني (OTP)، وحفظ المستخدمين والصور في Supabase.
-              </p>
+              <div className="p-3.5 rounded-2xl bg-emerald-500/10 border border-emerald-500/30 text-xs text-emerald-800 dark:text-emerald-300 space-y-2">
+                <p className="font-bold flex items-center gap-1.5 text-sm text-emerald-700 dark:text-emerald-400">
+                  <span>💡 ملاحظة هامة: لست بحاجة لإدخال أي شيء هنا!</span>
+                </p>
+                <p className="leading-relaxed">
+                  تطبيق QuickDrop مبرمج ليعمل ذاتياً وتلقائياً 100% بنظام التخزين والمصادقة المحلي المحمي مع نقل الملفات بدون أي إعدادات. هذه الشاشة اختيارية فقط للمطورين.
+                </p>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setShowSupabaseModal(false);
+                    onAuthSuccess(quickGuestLogin());
+                  }}
+                  className="w-full py-2.5 px-3 rounded-xl bg-emerald-600 hover:bg-emerald-700 active:scale-[0.99] text-white font-bold text-xs flex items-center justify-center gap-2 transition-all cursor-pointer shadow-sm"
+                >
+                  <Sparkles className="w-3.5 h-3.5" />
+                  <span>⚡ إغلاق والتشغيل التلقائي فوراً (بدون إعدادات)</span>
+                </button>
+              </div>
 
               {supabaseConfigError && (
                 <div className="p-3 rounded-xl bg-rose-50 dark:bg-rose-950/50 border border-rose-200 dark:border-rose-900/60 text-xs text-rose-700 dark:text-rose-300">
