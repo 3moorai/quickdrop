@@ -259,6 +259,9 @@ export default function App() {
       };
 
       setSession(newSession);
+      try {
+        sessionStorage.setItem('quickdrop_active_host_session', JSON.stringify(newSession));
+      } catch {}
 
       // Connect signaling client
       const signaling = new SignalingClient({
@@ -304,11 +307,10 @@ export default function App() {
       });
 
       try {
-        await signaling.connect();
+        await signaling.connect(newSession.sessionId, 'host');
         signaling.registerHost(newSession.sessionId, newSession.token, localDeviceInfo);
         signalingClientRef.current = signaling;
       } catch {
-        // In static GitHub Pages mode where WS is offline, allow pairing card to display
         setConnectionState('waiting');
       }
     } catch (err) {
@@ -320,55 +322,21 @@ export default function App() {
   };
 
   // Join an existing Session (Joiner)
-  const handleJoinSession = async (tokenOrCode: string) => {
+  const handleJoinSession = async (tokenOrCode: string, optionalToken?: string) => {
     setConnectionState('connecting');
 
     try {
       let targetSessionId = '';
-      let targetToken = '';
-      let targetExpires = 0;
+      let targetToken = optionalToken || tokenOrCode;
+      let targetExpires = Date.now() + 15 * 60 * 1000;
 
-      if (tokenOrCode.startsWith('QK-')) {
-        // Query by session ID
-        try {
-          const res = await fetch(`/api/sessions/${tokenOrCode.toUpperCase()}`);
-          if (res.ok) {
-            const data = await res.json();
-            targetSessionId = data.sessionId;
-            targetExpires = data.expiresAt;
-          }
-        } catch {
-          // fallback
-        }
-        if (!targetSessionId) {
-          targetSessionId = tokenOrCode.toUpperCase();
-          targetToken = tokenOrCode;
-          targetExpires = Date.now() + 15 * 60 * 1000;
-        }
+      const qkMatch = tokenOrCode.match(/QK-[A-Z0-9]{4}-[A-Z0-9]{4}/i);
+      if (qkMatch) {
+        targetSessionId = qkMatch[0].toUpperCase();
+      } else if (/^[A-Z0-9]{8}$/i.test(tokenOrCode)) {
+        targetSessionId = `QK-${tokenOrCode.slice(0, 4).toUpperCase()}-${tokenOrCode.slice(4, 8).toUpperCase()}`;
       } else {
-        // Verify via token
-        try {
-          const res = await fetch('/api/sessions/verify-token', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ token: tokenOrCode }),
-          });
-          if (res.ok) {
-            const data = await res.json();
-            targetSessionId = data.sessionId;
-            targetToken = data.token;
-            targetExpires = data.expiresAt;
-            if (data.iceServers) iceServersRef.current = data.iceServers;
-          }
-        } catch {
-          // fallback
-        }
-        if (!targetSessionId) {
-          targetSessionId = 'QK-' + tokenOrCode.slice(0, 4).toUpperCase() + '-' + tokenOrCode.slice(4, 8).toUpperCase();
-          targetToken = tokenOrCode;
-          targetExpires = Date.now() + 15 * 60 * 1000;
-          iceServersRef.current = [{ urls: 'stun:stun.l.google.com:19302' }];
-        }
+        targetSessionId = tokenOrCode.toUpperCase();
       }
 
       const joinSessionData: SessionData = {
@@ -421,7 +389,7 @@ export default function App() {
       });
 
       try {
-        await signaling.connect();
+        await signaling.connect(targetSessionId, 'joiner');
         signaling.joinSession(targetSessionId, targetToken, localDeviceInfo);
         signalingClientRef.current = signaling;
       } catch {
@@ -433,30 +401,71 @@ export default function App() {
     }
   };
 
-  // Check URL parameters for direct join or auto-start QR on PC / open scanner on mobile
+  // Check URL parameters for direct join or restore active session on refresh
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
-    const joinToken = params.get('join');
     const code = params.get('code');
+    const joinToken = params.get('join');
 
-    if (joinToken) {
+    if (code) {
+      handleJoinSession(code, joinToken || undefined).catch(() => {});
+    } else if (joinToken) {
       handleJoinSession(joinToken).catch(() => {});
-    } else if (code) {
-      handleJoinSession(code).catch(() => {});
     } else {
-      const isMobile = /Mobi|Android|iPhone|iPad/i.test(navigator.userAgent);
-      if (isMobile) {
-        // Automatically open the camera scanner on mobile to scan PC
-        setIsScannerOpen(true);
-      } else {
-        // Automatically start transfer session on computer to display QR code immediately
-        handleStartSession();
-      }
+      // Check if user refreshed an ongoing session
+      try {
+        const saved = sessionStorage.getItem('quickdrop_active_host_session');
+        if (saved) {
+          const sessionObj = JSON.parse(saved);
+          if (sessionObj && sessionObj.sessionId && sessionObj.expiresAt > Date.now() + 15000) {
+            setSession(sessionObj);
+            const signaling = new SignalingClient({
+              onRegistered: () => setConnectionState('waiting'),
+              onPeerJoined: async (peerInfo) => {
+                if (peerInfo) setPeerDeviceInfo(peerInfo);
+                setConnectionState('connecting');
+                const rtc = getOrCreateWebRTC(true);
+                await rtc.initializePeerConnection(true);
+                for (const cand of pendingCandidatesRef.current) {
+                  await rtc.handleReceivedIceCandidate(cand);
+                }
+                pendingCandidatesRef.current = [];
+              },
+              onAnswer: async (sdp) => {
+                await webrtcManagerRef.current?.handleReceivedAnswer(sdp);
+              },
+              onIceCandidate: async (candidate) => {
+                if (webrtcManagerRef.current) {
+                  await webrtcManagerRef.current.handleReceivedIceCandidate(candidate);
+                } else {
+                  pendingCandidatesRef.current.push(candidate);
+                }
+              },
+              onPeerDisconnected: () => setConnectionState('disconnected'),
+              onPeerLeft: () => setConnectionState('disconnected'),
+              onSessionExpired: () => handleEndSession(),
+              onError: (err) => console.warn('Signaling message:', err),
+            });
+
+            signaling.connect(sessionObj.sessionId, 'host').then(() => {
+              signaling.registerHost(sessionObj.sessionId, sessionObj.token, localDeviceInfo);
+              signalingClientRef.current = signaling;
+            });
+            return;
+          } else {
+            sessionStorage.removeItem('quickdrop_active_host_session');
+          }
+        }
+      } catch {}
     }
   }, []);
 
   // End active session
   const handleEndSession = () => {
+    try {
+      sessionStorage.removeItem('quickdrop_active_host_session');
+    } catch {}
+
     signalingClientRef.current?.leave();
     signalingClientRef.current = null;
 

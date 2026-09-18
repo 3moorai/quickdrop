@@ -116,17 +116,23 @@ export const QrScannerModal: React.FC<QrScannerModalProps> = ({
       const text = code.data.trim();
       let matchedTokenOrCode: string | null = null;
 
-      // Check if URL with ?join=token
+      // Check if URL with ?code= or ?join=
       try {
         const url = new URL(text);
+        const codeParam = url.searchParams.get('code');
         const joinParam = url.searchParams.get('join');
-        if (joinParam) {
+        if (codeParam) {
+          matchedTokenOrCode = codeParam.toUpperCase();
+        } else if (joinParam) {
           matchedTokenOrCode = joinParam;
         }
       } catch {
-        // Not a URL, check if code format QK-XXXX-XXXX
-        if (/^QK-[A-Z0-9]{4}-[A-Z0-9]{4}$/i.test(text)) {
-          matchedTokenOrCode = text.toUpperCase();
+        // Not a URL, extract QK-XXXX-XXXX if present
+        const qkMatch = text.match(/QK-[A-Z0-9]{4}-[A-Z0-9]{4}/i);
+        if (qkMatch) {
+          matchedTokenOrCode = qkMatch[0].toUpperCase();
+        } else if (/^[A-Z0-9]{8}$/i.test(text)) {
+          matchedTokenOrCode = `QK-${text.slice(0, 4).toUpperCase()}-${text.slice(4, 8).toUpperCase()}`;
         }
       }
 

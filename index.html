@@ -35,9 +35,24 @@
         "@supabase/supabase-js": "https://esm.sh/@supabase/supabase-js@2.48.1"
       }
     }
-    </script>
+    <style>
+      html, body {
+        background-color: #09090b;
+        margin: 0;
+        padding: 0;
+        min-height: 100%;
+        min-height: 100dvh;
+      }
+      html.light, html.light body {
+        background-color: #fafafa;
+      }
+      #root {
+        min-height: 100%;
+        min-height: 100dvh;
+      }
+    </style>
   </head>
-  <body class="bg-slate-50 text-slate-900 dark:bg-slate-950 dark:text-slate-100 min-h-screen transition-colors duration-200">
+  <body class="bg-zinc-50 text-zinc-900 dark:bg-zinc-950 dark:text-zinc-100 min-h-screen transition-colors duration-200">
     <div id="root"></div>
     <script type="module" src="./app.js"></script>
   </body>

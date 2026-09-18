@@ -485,14 +485,17 @@ var PairingCard = ({
           children: /* @__PURE__ */ jsx3(RefreshCw, { className: "w-4 h-4" })
         }
       ),
-      /* @__PURE__ */ jsx3(
+      /* @__PURE__ */ jsxs3(
         "button",
         {
           onClick: onCancel,
-          className: "p-2.5 rounded-xl bg-rose-50 dark:bg-rose-950/40 hover:bg-rose-100 dark:hover:bg-rose-900/60 text-rose-600 dark:text-rose-400 border border-rose-200 dark:border-rose-900/50 transition-colors focus:outline-none",
-          title: "Cancel Session",
+          className: "flex items-center gap-1.5 px-3 py-2.5 rounded-xl bg-rose-50 dark:bg-rose-950/40 hover:bg-rose-100 dark:hover:bg-rose-900/60 text-rose-600 dark:text-rose-400 border border-rose-200 dark:border-rose-900/50 transition-colors focus:outline-none text-xs font-semibold",
+          title: "Cancel Session and return home",
           id: "cancel-pairing-btn",
-          children: /* @__PURE__ */ jsx3(X, { className: "w-4 h-4" })
+          children: [
+            /* @__PURE__ */ jsx3(X, { className: "w-4 h-4" }),
+            /* @__PURE__ */ jsx3("span", { children: "\u0627\u0644\u0631\u0626\u064A\u0633\u064A\u0629" })
+          ]
         }
       )
     ] }),
@@ -598,13 +601,19 @@ var QrScannerModal = ({
       let matchedTokenOrCode = null;
       try {
         const url = new URL(text);
+        const codeParam = url.searchParams.get("code");
         const joinParam = url.searchParams.get("join");
-        if (joinParam) {
+        if (codeParam) {
+          matchedTokenOrCode = codeParam.toUpperCase();
+        } else if (joinParam) {
           matchedTokenOrCode = joinParam;
         }
       } catch {
-        if (/^QK-[A-Z0-9]{4}-[A-Z0-9]{4}$/i.test(text)) {
-          matchedTokenOrCode = text.toUpperCase();
+        const qkMatch = text.match(/QK-[A-Z0-9]{4}-[A-Z0-9]{4}/i);
+        if (qkMatch) {
+          matchedTokenOrCode = qkMatch[0].toUpperCase();
+        } else if (/^[A-Z0-9]{8}$/i.test(text)) {
+          matchedTokenOrCode = `QK-${text.slice(0, 4).toUpperCase()}-${text.slice(4, 8).toUpperCase()}`;
         }
       }
       if (matchedTokenOrCode) {
@@ -3153,95 +3162,164 @@ var SignalingClient = class {
     this.ws = null;
     this.callbacks = {};
     this.pingInterval = null;
+    this.retryInterval = null;
     this.isExplicitlyClosed = false;
+    this.role = "host";
+    this.sessionId = "";
+    this.safeTopic = "";
+    this.isConnected = false;
     this.callbacks = callbacks;
   }
-  connect() {
-    return new Promise((resolve, reject) => {
-      this.isExplicitlyClosed = false;
-      const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
-      const wsUrl = `${protocol}//${window.location.host}/ws`;
+  /**
+   * Connect to signaling relay for a given session ID
+   */
+  async connect(sessionId, role) {
+    this.isExplicitlyClosed = false;
+    this.role = role;
+    this.sessionId = sessionId;
+    this.safeTopic = "quickdrop-" + sessionId.toLowerCase().replace(/[^a-z0-9]/g, "");
+    return new Promise((resolve) => {
       try {
-        this.ws = new WebSocket(wsUrl);
-      } catch (err) {
-        return reject(err);
-      }
-      this.ws.onopen = () => {
-        this.callbacks.onConnectionChange?.(true);
-        this.startHeartbeat();
+        const wsUrl = `wss://ntfy.sh/${this.safeTopic}/ws`;
+        const ws = new WebSocket(wsUrl);
+        const timeout = window.setTimeout(() => {
+          this.isConnected = true;
+          this.callbacks.onConnectionChange?.(true);
+          resolve();
+        }, 3500);
+        ws.onopen = () => {
+          clearTimeout(timeout);
+          this.ws = ws;
+          this.isConnected = true;
+          this.callbacks.onConnectionChange?.(true);
+          this.startHeartbeat();
+          resolve();
+        };
+        ws.onmessage = (event) => {
+          try {
+            const data = JSON.parse(event.data);
+            if (data.event === "message" && typeof data.message === "string") {
+              try {
+                const payload = JSON.parse(data.message);
+                this.handleRelayMessage(payload);
+              } catch {
+              }
+            }
+          } catch (err) {
+            console.error("Error parsing signaling message:", err);
+          }
+        };
+        ws.onerror = () => {
+          clearTimeout(timeout);
+          this.isConnected = true;
+          resolve();
+        };
+        ws.onclose = () => {
+          this.stopHeartbeat();
+          this.callbacks.onConnectionChange?.(false);
+          if (!this.isExplicitlyClosed && this.safeTopic) {
+            setTimeout(() => {
+              if (!this.isExplicitlyClosed) {
+                this.connect(this.sessionId, this.role).catch(() => {
+                });
+              }
+            }, 2e3);
+          }
+        };
+      } catch {
+        this.isConnected = true;
         resolve();
-      };
-      this.ws.onmessage = (event) => {
-        try {
-          const msg = JSON.parse(event.data);
-          this.handleMessage(msg);
-        } catch (err) {
-          console.error("Error parsing signaling message:", err);
-        }
-      };
-      this.ws.onerror = (err) => {
-        this.callbacks.onError?.("Signaling connection error");
-        reject(err);
-      };
-      this.ws.onclose = () => {
-        this.stopHeartbeat();
-        this.callbacks.onConnectionChange?.(false);
-      };
+      }
     });
   }
-  handleMessage(msg) {
+  handleRelayMessage(msg) {
+    if (!msg || typeof msg !== "object") return;
+    if (msg.sender === this.role) return;
     switch (msg.type) {
-      case "registered":
-        this.callbacks.onRegistered?.(msg.sessionId, msg.expiresAt);
+      case "join_session":
+        if (this.role === "host") {
+          this.send({
+            type: "host_ack",
+            sessionId: this.sessionId,
+            deviceInfo: this.localDeviceInfo
+          });
+          this.callbacks.onPeerJoined?.(msg.deviceInfo);
+        }
         break;
-      case "joined":
-        this.callbacks.onJoined?.(msg.sessionId, msg.peerDeviceInfo);
-        break;
-      case "peer_joined":
-        this.callbacks.onPeerJoined?.(msg.peerDeviceInfo);
+      case "host_ack":
+        if (this.role === "joiner") {
+          this.stopRetry();
+          this.callbacks.onJoined?.(this.sessionId, msg.deviceInfo);
+        }
         break;
       case "signal_offer":
-        this.callbacks.onOffer?.(msg.sdp);
+        if (this.role === "joiner") {
+          this.stopRetry();
+          this.callbacks.onOffer?.(msg.sdp);
+        }
         break;
       case "signal_answer":
-        this.callbacks.onAnswer?.(msg.sdp);
+        if (this.role === "host") {
+          this.callbacks.onAnswer?.(msg.sdp);
+        }
         break;
       case "ice_candidate":
-        this.callbacks.onIceCandidate?.(msg.candidate);
-        break;
-      case "peer_disconnected":
-        this.callbacks.onPeerDisconnected?.();
+        if (msg.candidate) {
+          this.callbacks.onIceCandidate?.(msg.candidate);
+        }
         break;
       case "peer_left":
+      case "leave_session":
         this.callbacks.onPeerLeft?.();
         break;
       case "session_expired":
         this.callbacks.onSessionExpired?.(msg.reason);
         break;
-      case "error":
-        this.callbacks.onError?.(msg.message || "Unknown signaling error");
-        break;
-      case "pong":
-        break;
       default:
         break;
     }
   }
-  registerHost(sessionId, token, deviceInfo) {
+  registerHost(sessionId, _token, deviceInfo) {
+    this.role = "host";
+    this.sessionId = sessionId;
+    this.localDeviceInfo = deviceInfo;
+    this.safeTopic = "quickdrop-" + sessionId.toLowerCase().replace(/[^a-z0-9]/g, "");
+    this.callbacks.onRegistered?.(sessionId, Date.now() + 15 * 60 * 1e3);
     this.send({
-      type: "register_host",
+      type: "host_ready",
       sessionId,
-      token,
       deviceInfo
     });
   }
-  joinSession(sessionId, token, deviceInfo) {
-    this.send({
-      type: "join_session",
-      sessionId,
-      token,
-      deviceInfo
-    });
+  joinSession(sessionId, _token, deviceInfo) {
+    this.role = "joiner";
+    this.sessionId = sessionId;
+    this.localDeviceInfo = deviceInfo;
+    this.safeTopic = "quickdrop-" + sessionId.toLowerCase().replace(/[^a-z0-9]/g, "");
+    const sendJoin = () => {
+      this.send({
+        type: "join_session",
+        sessionId,
+        deviceInfo
+      });
+    };
+    sendJoin();
+    let retries = 0;
+    this.stopRetry();
+    this.retryInterval = window.setInterval(() => {
+      retries++;
+      if (retries > 8) {
+        this.stopRetry();
+        return;
+      }
+      sendJoin();
+    }, 1500);
+  }
+  stopRetry() {
+    if (this.retryInterval) {
+      clearInterval(this.retryInterval);
+      this.retryInterval = null;
+    }
   }
   sendOffer(sdp) {
     this.send({
@@ -3262,19 +3340,30 @@ var SignalingClient = class {
     });
   }
   leave() {
-    this.send({ type: "leave_session" });
+    this.send({ type: "peer_left" });
     this.close();
   }
-  send(payload) {
-    if (this.ws && this.ws.readyState === WebSocket.OPEN) {
-      this.ws.send(JSON.stringify(payload));
+  async send(payload) {
+    if (!this.safeTopic) return;
+    const body = JSON.stringify({
+      ...payload,
+      sender: this.role,
+      timestamp: Date.now()
+    });
+    try {
+      await fetch(`https://ntfy.sh/${this.safeTopic}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body
+      });
+    } catch (err) {
+      console.warn("Signaling send error:", err);
     }
   }
   startHeartbeat() {
     this.stopHeartbeat();
     this.pingInterval = window.setInterval(() => {
-      this.send({ type: "ping" });
-    }, 2e4);
+    }, 25e3);
   }
   stopHeartbeat() {
     if (this.pingInterval) {
@@ -3285,8 +3374,12 @@ var SignalingClient = class {
   close() {
     this.isExplicitlyClosed = true;
     this.stopHeartbeat();
+    this.stopRetry();
     if (this.ws) {
-      this.ws.close();
+      try {
+        this.ws.close();
+      } catch {
+      }
       this.ws = null;
     }
   }
@@ -3311,7 +3404,11 @@ var WebRTCManager = class {
     this.close();
     const config = {
       iceServers: this.iceServers.length > 0 ? this.iceServers : [
-        { urls: ["stun:stun.l.google.com:19302", "stun:stun1.l.google.com:19302"] }
+        { urls: "stun:stun.l.google.com:19302" },
+        { urls: "stun:stun1.l.google.com:19302" },
+        { urls: "stun:stun2.l.google.com:19302" },
+        { urls: "stun:stun.cloudflare.com:3478" },
+        { urls: "stun:stun.services.mozilla.com" }
       ],
       iceCandidatePoolSize: 4
     };
@@ -3927,6 +4024,10 @@ function App() {
         role: "host"
       };
       setSession(newSession);
+      try {
+        sessionStorage.setItem("quickdrop_active_host_session", JSON.stringify(newSession));
+      } catch {
+      }
       const signaling = new SignalingClient({
         onRegistered: () => {
           setConnectionState("waiting");
@@ -3965,7 +4066,7 @@ function App() {
         }
       });
       try {
-        await signaling.connect();
+        await signaling.connect(newSession.sessionId, "host");
         signaling.registerHost(newSession.sessionId, newSession.token, localDeviceInfo);
         signalingClientRef.current = signaling;
       } catch {
@@ -3978,49 +4079,19 @@ function App() {
       setIsCreatingSession(false);
     }
   };
-  const handleJoinSession = async (tokenOrCode) => {
+  const handleJoinSession = async (tokenOrCode, optionalToken) => {
     setConnectionState("connecting");
     try {
       let targetSessionId = "";
-      let targetToken = "";
-      let targetExpires = 0;
-      if (tokenOrCode.startsWith("QK-")) {
-        try {
-          const res = await fetch(`/api/sessions/${tokenOrCode.toUpperCase()}`);
-          if (res.ok) {
-            const data = await res.json();
-            targetSessionId = data.sessionId;
-            targetExpires = data.expiresAt;
-          }
-        } catch {
-        }
-        if (!targetSessionId) {
-          targetSessionId = tokenOrCode.toUpperCase();
-          targetToken = tokenOrCode;
-          targetExpires = Date.now() + 15 * 60 * 1e3;
-        }
+      let targetToken = optionalToken || tokenOrCode;
+      let targetExpires = Date.now() + 15 * 60 * 1e3;
+      const qkMatch = tokenOrCode.match(/QK-[A-Z0-9]{4}-[A-Z0-9]{4}/i);
+      if (qkMatch) {
+        targetSessionId = qkMatch[0].toUpperCase();
+      } else if (/^[A-Z0-9]{8}$/i.test(tokenOrCode)) {
+        targetSessionId = `QK-${tokenOrCode.slice(0, 4).toUpperCase()}-${tokenOrCode.slice(4, 8).toUpperCase()}`;
       } else {
-        try {
-          const res = await fetch("/api/sessions/verify-token", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ token: tokenOrCode })
-          });
-          if (res.ok) {
-            const data = await res.json();
-            targetSessionId = data.sessionId;
-            targetToken = data.token;
-            targetExpires = data.expiresAt;
-            if (data.iceServers) iceServersRef.current = data.iceServers;
-          }
-        } catch {
-        }
-        if (!targetSessionId) {
-          targetSessionId = "QK-" + tokenOrCode.slice(0, 4).toUpperCase() + "-" + tokenOrCode.slice(4, 8).toUpperCase();
-          targetToken = tokenOrCode;
-          targetExpires = Date.now() + 15 * 60 * 1e3;
-          iceServersRef.current = [{ urls: "stun:stun.l.google.com:19302" }];
-        }
+        targetSessionId = tokenOrCode.toUpperCase();
       }
       const joinSessionData = {
         sessionId: targetSessionId,
@@ -4066,7 +4137,7 @@ function App() {
         }
       });
       try {
-        await signaling.connect();
+        await signaling.connect(targetSessionId, "joiner");
         signaling.joinSession(targetSessionId, targetToken, localDeviceInfo);
         signalingClientRef.current = signaling;
       } catch {
@@ -4079,24 +4150,66 @@ function App() {
   };
   useEffect5(() => {
     const params = new URLSearchParams(window.location.search);
-    const joinToken = params.get("join");
     const code = params.get("code");
-    if (joinToken) {
+    const joinToken = params.get("join");
+    if (code) {
+      handleJoinSession(code, joinToken || void 0).catch(() => {
+      });
+    } else if (joinToken) {
       handleJoinSession(joinToken).catch(() => {
       });
-    } else if (code) {
-      handleJoinSession(code).catch(() => {
-      });
     } else {
-      const isMobile = /Mobi|Android|iPhone|iPad/i.test(navigator.userAgent);
-      if (isMobile) {
-        setIsScannerOpen(true);
-      } else {
-        handleStartSession();
+      try {
+        const saved = sessionStorage.getItem("quickdrop_active_host_session");
+        if (saved) {
+          const sessionObj = JSON.parse(saved);
+          if (sessionObj && sessionObj.sessionId && sessionObj.expiresAt > Date.now() + 15e3) {
+            setSession(sessionObj);
+            const signaling = new SignalingClient({
+              onRegistered: () => setConnectionState("waiting"),
+              onPeerJoined: async (peerInfo) => {
+                if (peerInfo) setPeerDeviceInfo(peerInfo);
+                setConnectionState("connecting");
+                const rtc = getOrCreateWebRTC(true);
+                await rtc.initializePeerConnection(true);
+                for (const cand of pendingCandidatesRef.current) {
+                  await rtc.handleReceivedIceCandidate(cand);
+                }
+                pendingCandidatesRef.current = [];
+              },
+              onAnswer: async (sdp) => {
+                await webrtcManagerRef.current?.handleReceivedAnswer(sdp);
+              },
+              onIceCandidate: async (candidate) => {
+                if (webrtcManagerRef.current) {
+                  await webrtcManagerRef.current.handleReceivedIceCandidate(candidate);
+                } else {
+                  pendingCandidatesRef.current.push(candidate);
+                }
+              },
+              onPeerDisconnected: () => setConnectionState("disconnected"),
+              onPeerLeft: () => setConnectionState("disconnected"),
+              onSessionExpired: () => handleEndSession(),
+              onError: (err) => console.warn("Signaling message:", err)
+            });
+            signaling.connect(sessionObj.sessionId, "host").then(() => {
+              signaling.registerHost(sessionObj.sessionId, sessionObj.token, localDeviceInfo);
+              signalingClientRef.current = signaling;
+            });
+            return;
+          } else {
+            sessionStorage.removeItem("quickdrop_active_host_session");
+          }
+        }
+      } catch {
       }
     }
   }, []);
   const handleEndSession = () => {
+    try {
+      sessionStorage.removeItem("quickdrop_active_host_session");
+    } catch {
+    }
     signalingClientRef.current?.leave();
     signalingClientRef.current = null;
     webrtcManagerRef.current?.close();

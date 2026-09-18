@@ -181,11 +181,12 @@ export const PairingCard: React.FC<PairingCardProps> = ({
 
         <button
           onClick={onCancel}
-          className="p-2.5 rounded-xl bg-rose-50 dark:bg-rose-950/40 hover:bg-rose-100 dark:hover:bg-rose-900/60 text-rose-600 dark:text-rose-400 border border-rose-200 dark:border-rose-900/50 transition-colors focus:outline-none"
-          title="Cancel Session"
+          className="flex items-center gap-1.5 px-3 py-2.5 rounded-xl bg-rose-50 dark:bg-rose-950/40 hover:bg-rose-100 dark:hover:bg-rose-900/60 text-rose-600 dark:text-rose-400 border border-rose-200 dark:border-rose-900/50 transition-colors focus:outline-none text-xs font-semibold"
+          title="Cancel Session and return home"
           id="cancel-pairing-btn"
         >
           <X className="w-4 h-4" />
+          <span>الرئيسية</span>
         </button>
       </div>
 

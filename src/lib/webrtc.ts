@@ -62,7 +62,11 @@ export class WebRTCManager {
 
     const config: RTCConfiguration = {
       iceServers: this.iceServers.length > 0 ? this.iceServers : [
-        { urls: ['stun:stun.l.google.com:19302', 'stun:stun1.l.google.com:19302'] }
+        { urls: 'stun:stun.l.google.com:19302' },
+        { urls: 'stun:stun1.l.google.com:19302' },
+        { urls: 'stun:stun2.l.google.com:19302' },
+        { urls: 'stun:stun.cloudflare.com:3478' },
+        { urls: 'stun:stun.services.mozilla.com' },
       ],
       iceCandidatePoolSize: 4,
     };

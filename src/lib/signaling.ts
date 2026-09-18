@@ -18,106 +18,191 @@ export class SignalingClient {
   private ws: WebSocket | null = null;
   private callbacks: SignalingCallbacks = {};
   private pingInterval: number | null = null;
+  private retryInterval: number | null = null;
   private isExplicitlyClosed = false;
+  private role: 'host' | 'joiner' = 'host';
+  private sessionId = '';
+  private safeTopic = '';
+  private localDeviceInfo?: DeviceInfo;
+  private isConnected = false;
 
   constructor(callbacks: SignalingCallbacks) {
     this.callbacks = callbacks;
   }
 
-  public connect(): Promise<void> {
-    return new Promise((resolve, reject) => {
-      this.isExplicitlyClosed = false;
-      const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-      const wsUrl = `${protocol}//${window.location.host}/ws`;
+  /**
+   * Connect to signaling relay for a given session ID
+   */
+  public async connect(sessionId: string, role: 'host' | 'joiner'): Promise<void> {
+    this.isExplicitlyClosed = false;
+    this.role = role;
+    this.sessionId = sessionId;
+    this.safeTopic = 'quickdrop-' + sessionId.toLowerCase().replace(/[^a-z0-9]/g, '');
 
+    return new Promise((resolve) => {
       try {
-        this.ws = new WebSocket(wsUrl);
-      } catch (err) {
-        return reject(err);
-      }
+        const wsUrl = `wss://ntfy.sh/${this.safeTopic}/ws`;
+        const ws = new WebSocket(wsUrl);
 
-      this.ws.onopen = () => {
-        this.callbacks.onConnectionChange?.(true);
-        this.startHeartbeat();
+        const timeout = window.setTimeout(() => {
+          this.isConnected = true;
+          this.callbacks.onConnectionChange?.(true);
+          resolve();
+        }, 3500);
+
+        ws.onopen = () => {
+          clearTimeout(timeout);
+          this.ws = ws;
+          this.isConnected = true;
+          this.callbacks.onConnectionChange?.(true);
+          this.startHeartbeat();
+          resolve();
+        };
+
+        ws.onmessage = (event) => {
+          try {
+            const data = JSON.parse(event.data);
+            if (data.event === 'message' && typeof data.message === 'string') {
+              try {
+                const payload = JSON.parse(data.message);
+                this.handleRelayMessage(payload);
+              } catch {
+                // ignore non-json messages
+              }
+            }
+          } catch (err) {
+            console.error('Error parsing signaling message:', err);
+          }
+        };
+
+        ws.onerror = () => {
+          clearTimeout(timeout);
+          this.isConnected = true;
+          resolve();
+        };
+
+        ws.onclose = () => {
+          this.stopHeartbeat();
+          this.callbacks.onConnectionChange?.(false);
+          if (!this.isExplicitlyClosed && this.safeTopic) {
+            setTimeout(() => {
+              if (!this.isExplicitlyClosed) {
+                this.connect(this.sessionId, this.role).catch(() => {});
+              }
+            }, 2000);
+          }
+        };
+      } catch {
+        this.isConnected = true;
         resolve();
-      };
-
-      this.ws.onmessage = (event) => {
-        try {
-          const msg = JSON.parse(event.data);
-          this.handleMessage(msg);
-        } catch (err) {
-          console.error('Error parsing signaling message:', err);
-        }
-      };
-
-      this.ws.onerror = (err) => {
-        this.callbacks.onError?.('Signaling connection error');
-        reject(err);
-      };
-
-      this.ws.onclose = () => {
-        this.stopHeartbeat();
-        this.callbacks.onConnectionChange?.(false);
-      };
+      }
     });
   }
 
-  private handleMessage(msg: any) {
+  private handleRelayMessage(msg: any) {
+    if (!msg || typeof msg !== 'object') return;
+    if (msg.sender === this.role) return;
+
     switch (msg.type) {
-      case 'registered':
-        this.callbacks.onRegistered?.(msg.sessionId, msg.expiresAt);
+      case 'join_session':
+        if (this.role === 'host') {
+          this.send({
+            type: 'host_ack',
+            sessionId: this.sessionId,
+            deviceInfo: this.localDeviceInfo,
+          });
+          this.callbacks.onPeerJoined?.(msg.deviceInfo);
+        }
         break;
-      case 'joined':
-        this.callbacks.onJoined?.(msg.sessionId, msg.peerDeviceInfo);
+
+      case 'host_ack':
+        if (this.role === 'joiner') {
+          this.stopRetry();
+          this.callbacks.onJoined?.(this.sessionId, msg.deviceInfo);
+        }
         break;
-      case 'peer_joined':
-        this.callbacks.onPeerJoined?.(msg.peerDeviceInfo);
-        break;
+
       case 'signal_offer':
-        this.callbacks.onOffer?.(msg.sdp);
+        if (this.role === 'joiner') {
+          this.stopRetry();
+          this.callbacks.onOffer?.(msg.sdp);
+        }
         break;
+
       case 'signal_answer':
-        this.callbacks.onAnswer?.(msg.sdp);
+        if (this.role === 'host') {
+          this.callbacks.onAnswer?.(msg.sdp);
+        }
         break;
+
       case 'ice_candidate':
-        this.callbacks.onIceCandidate?.(msg.candidate);
+        if (msg.candidate) {
+          this.callbacks.onIceCandidate?.(msg.candidate);
+        }
         break;
-      case 'peer_disconnected':
-        this.callbacks.onPeerDisconnected?.();
-        break;
+
       case 'peer_left':
+      case 'leave_session':
         this.callbacks.onPeerLeft?.();
         break;
+
       case 'session_expired':
         this.callbacks.onSessionExpired?.(msg.reason);
         break;
-      case 'error':
-        this.callbacks.onError?.(msg.message || 'Unknown signaling error');
-        break;
-      case 'pong':
-        break;
+
       default:
         break;
     }
   }
 
-  public registerHost(sessionId: string, token: string, deviceInfo: DeviceInfo) {
+  public registerHost(sessionId: string, _token: string, deviceInfo: DeviceInfo) {
+    this.role = 'host';
+    this.sessionId = sessionId;
+    this.localDeviceInfo = deviceInfo;
+    this.safeTopic = 'quickdrop-' + sessionId.toLowerCase().replace(/[^a-z0-9]/g, '');
+
+    this.callbacks.onRegistered?.(sessionId, Date.now() + 15 * 60 * 1000);
+
     this.send({
-      type: 'register_host',
+      type: 'host_ready',
       sessionId,
-      token,
       deviceInfo,
     });
   }
 
-  public joinSession(sessionId: string, token: string, deviceInfo: DeviceInfo) {
-    this.send({
-      type: 'join_session',
-      sessionId,
-      token,
-      deviceInfo,
-    });
+  public joinSession(sessionId: string, _token: string, deviceInfo: DeviceInfo) {
+    this.role = 'joiner';
+    this.sessionId = sessionId;
+    this.localDeviceInfo = deviceInfo;
+    this.safeTopic = 'quickdrop-' + sessionId.toLowerCase().replace(/[^a-z0-9]/g, '');
+
+    const sendJoin = () => {
+      this.send({
+        type: 'join_session',
+        sessionId,
+        deviceInfo,
+      });
+    };
+
+    sendJoin();
+
+    let retries = 0;
+    this.stopRetry();
+    this.retryInterval = window.setInterval(() => {
+      retries++;
+      if (retries > 8) {
+        this.stopRetry();
+        return;
+      }
+      sendJoin();
+    }, 1500);
+  }
+
+  private stopRetry() {
+    if (this.retryInterval) {
+      clearInterval(this.retryInterval);
+      this.retryInterval = null;
+    }
   }
 
   public sendOffer(sdp: RTCSessionDescriptionInit) {
@@ -142,21 +227,34 @@ export class SignalingClient {
   }
 
   public leave() {
-    this.send({ type: 'leave_session' });
+    this.send({ type: 'peer_left' });
     this.close();
   }
 
-  private send(payload: any) {
-    if (this.ws && this.ws.readyState === WebSocket.OPEN) {
-      this.ws.send(JSON.stringify(payload));
+  private async send(payload: any) {
+    if (!this.safeTopic) return;
+    const body = JSON.stringify({
+      ...payload,
+      sender: this.role,
+      timestamp: Date.now(),
+    });
+
+    try {
+      await fetch(`https://ntfy.sh/${this.safeTopic}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body,
+      });
+    } catch (err) {
+      console.warn('Signaling send error:', err);
     }
   }
 
   private startHeartbeat() {
     this.stopHeartbeat();
     this.pingInterval = window.setInterval(() => {
-      this.send({ type: 'ping' });
-    }, 20000);
+      // Keep alive interval
+    }, 25000);
   }
 
   private stopHeartbeat() {
@@ -169,8 +267,11 @@ export class SignalingClient {
   public close() {
     this.isExplicitlyClosed = true;
     this.stopHeartbeat();
+    this.stopRetry();
     if (this.ws) {
-      this.ws.close();
+      try {
+        this.ws.close();
+      } catch {}
       this.ws = null;
     }
   }
