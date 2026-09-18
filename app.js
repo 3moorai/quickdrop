@@ -3157,6 +3157,7 @@ function getLocalDeviceInfo() {
 }
 
 // src/lib/signaling.ts
+var CUSTOM_SIGNALING_URL = typeof import.meta !== "undefined" && import.meta.env && import.meta.env.VITE_SIGNALING_SERVER_URL || "";
 var SignalingClient = class {
   constructor(callbacks) {
     this.ws = null;
@@ -3180,7 +3181,7 @@ var SignalingClient = class {
     this.safeTopic = "quickdrop-" + sessionId.toLowerCase().replace(/[^a-z0-9]/g, "");
     return new Promise((resolve) => {
       try {
-        const wsUrl = `wss://ntfy.sh/${this.safeTopic}/ws`;
+        const wsUrl = CUSTOM_SIGNALING_URL ? CUSTOM_SIGNALING_URL.replace(/^http/i, "ws").replace(/\/+$/, "") + "/" + this.safeTopic + "/ws" : `wss://ntfy.sh/${this.safeTopic}/ws`;
         const ws = new WebSocket(wsUrl);
         const timeout = window.setTimeout(() => {
           this.isConnected = true;
@@ -3351,7 +3352,8 @@ var SignalingClient = class {
       timestamp: Date.now()
     });
     try {
-      await fetch(`https://ntfy.sh/${this.safeTopic}`, {
+      const endpoint = CUSTOM_SIGNALING_URL ? CUSTOM_SIGNALING_URL.replace(/^ws/i, "http").replace(/\/+$/, "") + "/" + this.safeTopic : `https://ntfy.sh/${this.safeTopic}`;
+      await fetch(endpoint, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body
