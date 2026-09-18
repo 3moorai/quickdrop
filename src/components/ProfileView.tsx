@@ -259,14 +259,14 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
               name={name || user.name}
               avatarUrl={avatarUrl}
               size="2xl"
-              className="border-4 border-blue-500/30 shadow-lg group-hover:scale-105 transition-transform"
+              className="shadow-xl group-hover:scale-105 transition-transform"
             />
             <div className="absolute inset-0 bg-black/40 rounded-full flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity">
               <Camera className="w-8 h-8 text-white" />
             </div>
             <button
               type="button"
-              className="absolute bottom-1 right-1 p-2 rounded-full bg-blue-600 text-white shadow-md hover:bg-blue-700 transition-colors cursor-pointer"
+              className="absolute bottom-1 right-1 p-2.5 rounded-full bg-zinc-900 dark:bg-zinc-100 text-white dark:text-zinc-900 ring-2 ring-white dark:ring-zinc-900 shadow-md hover:scale-105 transition-all cursor-pointer"
               title="تغيير الصورة"
             >
               <Camera className="w-4 h-4" />

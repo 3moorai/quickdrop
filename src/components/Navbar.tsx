@@ -209,7 +209,6 @@ export const Navbar: React.FC<NavbarProps> = ({
                   name={currentUser.name}
                   avatarUrl={currentUser.avatarUrl}
                   size="xs"
-                  className="border border-blue-500/40"
                 />
                 <span className="max-w-[80px] sm:max-w-[110px] truncate">{currentUser.name || 'حسابي'}</span>
               </button>

@@ -78,24 +78,24 @@ var UserAvatar = ({
   const initials = getUserInitials(name);
   const gradient = getDeterministicGradient(name);
   const hasValidImage = Boolean(avatarUrl && !imageError);
-  return /* @__PURE__ */ jsxs("div", { className: `relative inline-flex shrink-0 select-none ${className}`, children: [
+  return /* @__PURE__ */ jsxs("div", { className: `relative inline-flex shrink-0 select-none rounded-full ${sizeClasses[size]} ${className}`, children: [
     /* @__PURE__ */ jsx(
       "div",
       {
-        className: `${sizeClasses[size]} rounded-full overflow-hidden flex items-center justify-center shadow-xs transition-transform duration-200`,
+        className: "w-full h-full rounded-full overflow-hidden flex items-center justify-center shadow-xs transition-transform duration-200",
         children: hasValidImage ? /* @__PURE__ */ jsx(
           "img",
           {
             src: avatarUrl,
             alt: name,
-            className: "w-full h-full object-cover",
+            className: "w-full h-full object-cover rounded-full",
             referrerPolicy: "no-referrer",
             onError: () => setImageError(true)
           }
         ) : /* @__PURE__ */ jsx(
           "div",
           {
-            className: `w-full h-full bg-gradient-to-tr ${gradient} text-white flex items-center justify-center font-bold tracking-wider uppercase shadow-inner`,
+            className: `w-full h-full rounded-full bg-gradient-to-tr ${gradient} text-white flex items-center justify-center font-bold tracking-wider uppercase shadow-inner`,
             title: name,
             children: initials
           }
@@ -262,8 +262,7 @@ var Navbar = ({
                 {
                   name: currentUser.name,
                   avatarUrl: currentUser.avatarUrl,
-                  size: "xs",
-                  className: "border border-blue-500/40"
+                  size: "xs"
                 }
               ),
               /* @__PURE__ */ jsx2("span", { className: "max-w-[80px] sm:max-w-[110px] truncate", children: currentUser.name || "\u062D\u0633\u0627\u0628\u064A" })
@@ -2095,7 +2094,7 @@ async function compressAvatarImage(file, maxWidth = 512, maxHeight = 512, qualit
 }
 function generateDeterministicAvatar(name) {
   const clean = encodeURIComponent((name || "User").trim());
-  return `https://api.dicebear.com/7.x/identicon/svg?seed=${clean}&backgroundColor=2563eb,4f46e5,7c3aed,059669,d97706`;
+  return `https://api.dicebear.com/7.x/initials/svg?seed=${clean}&radius=50&backgroundColor=4f46e5,7c3aed,059669,d97706,e11d48`;
 }
 async function uploadUserAvatar(userId, file) {
   const supabase = getSupabaseClient();
@@ -3560,7 +3559,7 @@ var AuthView = ({ onAuthSuccess }) => {
               name: fullName || "New User",
               avatarUrl: avatarPreview,
               size: "xl",
-              className: "border-2 border-blue-500/40 shadow-md group-hover:scale-105 transition-transform"
+              className: "shadow-md group-hover:scale-105 transition-transform"
             }
           ),
           /* @__PURE__ */ jsx11("div", { className: "absolute inset-0 bg-black/40 rounded-full flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity", children: /* @__PURE__ */ jsx11(Camera4, { className: "w-6 h-6 text-white" }) }),
@@ -3568,7 +3567,7 @@ var AuthView = ({ onAuthSuccess }) => {
             "button",
             {
               type: "button",
-              className: "absolute bottom-0 right-0 p-1.5 rounded-full bg-blue-600 text-white shadow-md hover:bg-blue-700 cursor-pointer",
+              className: "absolute bottom-0 right-0 p-2 rounded-full bg-zinc-900 dark:bg-zinc-100 text-white dark:text-zinc-900 ring-2 ring-white dark:ring-zinc-900 shadow-md hover:scale-105 transition-all cursor-pointer",
               title: "\u0627\u062E\u062A\u0631 \u0635\u0648\u0631\u0629 \u0634\u062E\u0635\u064A\u0629",
               children: /* @__PURE__ */ jsx11(Camera4, { className: "w-3.5 h-3.5" })
             }
@@ -4242,7 +4241,7 @@ var ProfileView = ({
               name: name || user.name,
               avatarUrl,
               size: "2xl",
-              className: "border-4 border-blue-500/30 shadow-lg group-hover:scale-105 transition-transform"
+              className: "shadow-xl group-hover:scale-105 transition-transform"
             }
           ),
           /* @__PURE__ */ jsx12("div", { className: "absolute inset-0 bg-black/40 rounded-full flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity", children: /* @__PURE__ */ jsx12(Camera5, { className: "w-8 h-8 text-white" }) }),
@@ -4250,7 +4249,7 @@ var ProfileView = ({
             "button",
             {
               type: "button",
-              className: "absolute bottom-1 right-1 p-2 rounded-full bg-blue-600 text-white shadow-md hover:bg-blue-700 transition-colors cursor-pointer",
+              className: "absolute bottom-1 right-1 p-2.5 rounded-full bg-zinc-900 dark:bg-zinc-100 text-white dark:text-zinc-900 ring-2 ring-white dark:ring-zinc-900 shadow-md hover:scale-105 transition-all cursor-pointer",
               title: "\u062A\u063A\u064A\u064A\u0631 \u0627\u0644\u0635\u0648\u0631\u0629",
               children: /* @__PURE__ */ jsx12(Camera5, { className: "w-4 h-4" })
             }

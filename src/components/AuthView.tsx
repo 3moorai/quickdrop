@@ -662,14 +662,14 @@ export const AuthView: React.FC<AuthViewProps> = ({ onAuthSuccess }) => {
                   name={fullName || 'New User'}
                   avatarUrl={avatarPreview}
                   size="xl"
-                  className="border-2 border-blue-500/40 shadow-md group-hover:scale-105 transition-transform"
+                  className="shadow-md group-hover:scale-105 transition-transform"
                 />
                 <div className="absolute inset-0 bg-black/40 rounded-full flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity">
                   <Camera className="w-6 h-6 text-white" />
                 </div>
                 <button
                   type="button"
-                  className="absolute bottom-0 right-0 p-1.5 rounded-full bg-blue-600 text-white shadow-md hover:bg-blue-700 cursor-pointer"
+                  className="absolute bottom-0 right-0 p-2 rounded-full bg-zinc-900 dark:bg-zinc-100 text-white dark:text-zinc-900 ring-2 ring-white dark:ring-zinc-900 shadow-md hover:scale-105 transition-all cursor-pointer"
                   title="اختر صورة شخصية"
                 >
                   <Camera className="w-3.5 h-3.5" />

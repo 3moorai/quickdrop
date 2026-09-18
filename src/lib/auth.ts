@@ -246,7 +246,7 @@ export async function compressAvatarImage(
  */
 export function generateDeterministicAvatar(name: string): string {
   const clean = encodeURIComponent((name || 'User').trim());
-  return `https://api.dicebear.com/7.x/identicon/svg?seed=${clean}&backgroundColor=2563eb,4f46e5,7c3aed,059669,d97706`;
+  return `https://api.dicebear.com/7.x/initials/svg?seed=${clean}&radius=50&backgroundColor=4f46e5,7c3aed,059669,d97706,e11d48`;
 }
 
 /**

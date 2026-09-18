@@ -73,21 +73,21 @@ export const UserAvatar: React.FC<UserAvatarProps> = ({
   const hasValidImage = Boolean(avatarUrl && !imageError);
 
   return (
-    <div className={`relative inline-flex shrink-0 select-none ${className}`}>
+    <div className={`relative inline-flex shrink-0 select-none rounded-full ${sizeClasses[size]} ${className}`}>
       <div
-        className={`${sizeClasses[size]} rounded-full overflow-hidden flex items-center justify-center shadow-xs transition-transform duration-200`}
+        className="w-full h-full rounded-full overflow-hidden flex items-center justify-center shadow-xs transition-transform duration-200"
       >
         {hasValidImage ? (
           <img
             src={avatarUrl!}
             alt={name}
-            className="w-full h-full object-cover"
+            className="w-full h-full object-cover rounded-full"
             referrerPolicy="no-referrer"
             onError={() => setImageError(true)}
           />
         ) : (
           <div
-            className={`w-full h-full bg-gradient-to-tr ${gradient} text-white flex items-center justify-center font-bold tracking-wider uppercase shadow-inner`}
+            className={`w-full h-full rounded-full bg-gradient-to-tr ${gradient} text-white flex items-center justify-center font-bold tracking-wider uppercase shadow-inner`}
             title={name}
           >
             {initials}
